@@ -93,6 +93,7 @@ def is_html_empty(html: HtmlInput) -> bool:
     """Return True if HTML looks empty."""
 
     normalized = _normalize_html(html)
+    
 
     if not normalized:
         return True
@@ -152,6 +153,8 @@ def looks_like_js_page(html: HtmlInput) -> bool:
     if not normalized:
         return True
 
+    html_lower = normalized.lower()
+
     # Large pages are almost always static
     if len(normalized) > 50000:
         return False
@@ -197,3 +200,21 @@ def html_needs_browser(html: HtmlInput) -> bool:
         return True
 
     return False
+
+
+def force_dynamic(url: str) -> bool:
+    """Force dynamic rendering for known heavy JavaScript domains."""
+
+    if not url:
+        return False
+
+    url = url.lower()
+    heavy_sites = (
+        "youtube.com",
+        "twitter.com",
+        "x.com",
+        "instagram.com",
+        "linkedin.com",
+        "tiktok.com",
+    )
+    return any(site in url for site in heavy_sites)

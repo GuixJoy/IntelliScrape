@@ -1,61 +1,73 @@
-"""DOM text extraction utilities for IntelliScrape."""
+"""
+Content extraction module for IntelliScrape.
+"""
 
 from __future__ import annotations
 
-from typing import Iterable
 
-from bs4 import BeautifulSoup
-
-from .exceptions import IntelliScrapeError
-
-_NOISE_TAGS: Iterable[str] = (
-    "nav",
-    "footer",
-    "header",
-    "aside",
-    "form",
-)
-
-
-def remove_noise(soup: BeautifulSoup) -> BeautifulSoup:
-    """Remove structural noise elements (nav, footer, etc.) from ``soup``."""
+def extract_text(soup) -> str:
 
     if soup is None:
-        raise IntelliScrapeError("Invalid DOM provided")
+        return ""
 
-    for tag in _NOISE_TAGS:
-        for element in soup.find_all(tag):
-            element.decompose()
-    return soup
+    # Remove heavy non-content tags
+    for tag in soup(["script", "style", "noscript", "svg"]):
+        tag.decompose()
 
+    lines = []
+    seen = set()
 
-def extract_main_text(soup: BeautifulSoup) -> str:
-    """Extract normalized visible text from soup."""
+    # -------- YouTube Titles First --------
+    for tag in soup.select("a#video-title"):
+        text = tag.get_text(" ", strip=True)
 
-    if soup is None:
-        raise IntelliScrapeError("Invalid DOM provided")
+        garbage_patterns = [
+            "css-build",
+            "css_build",
+            "yt_base_styles",
+            "polymer",
+            "shady",
+            ".css.js",
+        ]
 
-    main = soup.find("main")
+        for g in garbage_patterns:
+            if g in text.lower():
+                text = text.split(g)[0].strip()
 
-    if not main:
-        main = soup.find("article")
+        if len(text) > 5 and text not in seen:
+            lines.append(text)
+            seen.add(text)
 
-    if not main:
-        main = soup.body
+        if len(lines) > 120:
+            break
 
-    if not main:
-        raise IntelliScrapeError("No content container found")
+    # -------- Generic Fallback --------
 
-    text = main.get_text(separator=" ", strip=True)
+    if len(lines) < 20:
 
-    if not text:
-        raise IntelliScrapeError("No text extracted")
+        text = soup.get_text(separator="\n")
 
-    return text
+        for line in text.split("\n"):
 
+            line = line.strip()
 
-def extract_text(soup: BeautifulSoup) -> str:
-    """Full extraction pipeline: remove noise then return cleaned text."""
+            if len(line) < 8:
+                continue
 
-    cleaned_soup = remove_noise(soup)
-    return extract_main_text(cleaned_soup)
+            if any(x in line.lower() for x in [
+                "css-build",
+                "css_build",
+                "polymer",
+                "shady",
+                ".css.js"
+            ]):
+                continue
+
+            if line not in seen:
+                lines.append(line)
+                seen.add(line)
+
+            if len(lines) > 300:
+                break
+
+    return "\n".join(lines)

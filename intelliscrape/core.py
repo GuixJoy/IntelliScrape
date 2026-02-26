@@ -8,12 +8,13 @@ from __future__ import annotations
 
 from urllib.parse import urlsplit
 
+from .browser import download_dynamic_html
 from .cleaner import clean_text
 from .downloader import download_html
 from .exceptions import IntelliScrapeError
 from .extractor import extract_text
 from .parser import build_dom
-from .utils import html_needs_browser
+from .utils import force_dynamic, html_needs_browser
 
 
 _ALLOWED_SCHEMES = {"http", "https"}
@@ -36,16 +37,17 @@ def scrape(url: str) -> str:
 
     try:
 
-        # Download HTML
-        html = download_html(url)
+        try:
+            html = download_html(url)
 
-        # Detect dynamic pages
-        needs_browser = html_needs_browser(html)
+            needs_browser = html_needs_browser(html)
 
-        if needs_browser:
-            raise IntelliScrapeError(
-                "Dynamic site detected. Browser engine not implemented yet."
-            )
+            if force_dynamic(url) or needs_browser:
+                html = download_dynamic_html(url)
+
+        except IntelliScrapeError:
+            # Fallback to browser if static download fails
+            html = download_dynamic_html(url)
 
         # Parse DOM
         dom = build_dom(html)
