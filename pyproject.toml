@@ -37,3 +37,6 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent"
 ]
+
+[project.scripts]
+intelliscrape = "intelliscrape.cli:main"
