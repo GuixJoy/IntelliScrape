@@ -64,17 +64,26 @@ def check_links(
             links = [l for l in links if urlsplit(l).netloc == base_netloc]
         if log:
             log(f"checking {len(links)} links")
-        def check_one(link: str) -> LinkCheckResult:
+
+        broken: List[LinkCheckResult] = []
+
+        for i, link in enumerate(links, 1):
             try:
-                resp: Response = sess.head(link, allow_redirects=True, timeout=timeout or 5.0)
-                return link, resp.status_code
+                resp: Response = sess.head(
+                    link,
+                    allow_redirects=True,
+                    timeout=timeout or 5.0,
+                )
+                status = resp.status_code
             except RequestException:
-                return link, 0
-        results = [check_one(l) for l in links]
-        if log:
-            for i, (l, s) in enumerate(results, 1):
-                log(f"checked {i}/{len(results)}: {l} -> {s}")
-        broken = [(l, s) for (l, s) in results if s not in allowed]
+                status = 0
+
+            if log:
+                log(f"checked {i}/{len(links)}: {link} -> {status}")
+
+            if status not in allowed:
+                broken.append((link, status))
+
         return (not broken, broken)
     finally:
         if session is None:
