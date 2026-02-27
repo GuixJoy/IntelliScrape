@@ -121,4 +121,4 @@ playwright install
 
 ## License
 
-MIT
+LGPL 2.1 
