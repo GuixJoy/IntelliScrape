@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "intelliscrape"
-version = "1.0.0"
+version = "1.0.1"
 description = "Smart Python web scraping library with automatic static and dynamic website detection"
 readme = "README.md"
 license = {text = "MIT"}
@@ -19,6 +19,7 @@ requires-python = ">=3.9"
 dependencies = [
     "requests",
     "beautifulsoup4",
+    "lxml",
     "playwright"
 ]
 
