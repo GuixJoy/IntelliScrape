@@ -46,7 +46,23 @@ pip install intelliscrape[all]
 
 ## Quick Start
 
-### One-liner
+### Command Line (Simplest)
+
+```bash
+# Scrape any website
+intelliscrape https://example.com
+
+# Save to file
+intelliscrape https://example.com -o output.txt
+
+# Get JSON with metadata
+intelliscrape https://example.com --json
+
+# Crawl entire site
+intelliscrape https://docs.python.org --crawl
+```
+
+### Python (One-liner)
 
 ```python
 from intelliscrape import scrape
