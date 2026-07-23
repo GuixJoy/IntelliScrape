@@ -170,3 +170,29 @@ def create_datacenter_proxy(host: str, port: int, **kwargs) -> ProxyConfig:
 def create_mobile_proxy(host: str, port: int, **kwargs) -> ProxyConfig:
     """Create a mobile proxy config."""
     return ProxyConfig(host=host, port=port, proxy_type=ProxyType.MOBILE, **kwargs)
+
+
+# Import providers
+from .providers import (
+    ProxyProviderFactory,
+    ProxyProviderConfig,
+    BrightDataProvider,
+    ScraperAPIProvider,
+    OxylabsProvider,
+    SmartproxyProvider,
+)
+
+__all__ = [
+    "ProxyConfig",
+    "ProxyManager",
+    "ProxyType",
+    "create_residential_proxy",
+    "create_datacenter_proxy",
+    "create_mobile_proxy",
+    "ProxyProviderFactory",
+    "ProxyProviderConfig",
+    "BrightDataProvider",
+    "ScraperAPIProvider",
+    "OxylabsProvider",
+    "SmartproxyProvider",
+]

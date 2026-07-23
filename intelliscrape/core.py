@@ -24,6 +24,7 @@ from .engines.base import ScrapeResult
 from .engines.playwright_stealth import PlaywrightStealthEngine
 from .engines.static import StaticEngine
 from .engines.stealth import StealthEngine
+from .engines.camoufox import CamoufoxEngine
 from .exceptions import IntelliScrapeError
 from .extractor import extract_text
 from .extractor.structured import StructuredExtractor, StructuredData
@@ -168,6 +169,12 @@ class IntelliScrape:
                 simulate_behavior=simulate_behavior,
             ),
             "nodriver": StealthEngine(
+                fingerprint_generator=self.fingerprint_gen,
+                proxy=proxy_config,
+                headless=headless,
+                simulate_behavior=simulate_behavior,
+            ),
+            "camoufox": CamoufoxEngine(
                 fingerprint_generator=self.fingerprint_gen,
                 proxy=proxy_config,
                 headless=headless,
@@ -332,7 +339,7 @@ class IntelliScrape:
             return self._fetch_with_engine(url, engine, **kwargs)
 
         # Auto-detect: try engines in order of preference
-        engine_order = ["static", "playwright_stealth", "nodriver"]
+        engine_order = ["static", "playwright_stealth", "camoufox", "nodriver"]
 
         for engine_name in engine_order:
             result = self._fetch_with_engine(url, engine_name, **kwargs)

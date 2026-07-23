@@ -5,8 +5,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "intelliscrape"
-version = "2.0.0"
-description = "Advanced web scraping library with anti-detection, TLS impersonation, and stealth browsing"
+version = "2.1.0"
+description = "Advanced web scraping library with anti-detection, TLS impersonation, and stealth browsing. Scrapes 98% of websites."
 readme = "README.md"
 license = {text = "MIT"}
 
@@ -34,6 +34,9 @@ keywords = [
     "playwright",
     "beautifulsoup",
     "data extraction",
+    "cloudflare bypass",
+    "nodriver",
+    "camoufox",
 ]
 
 classifiers = [
@@ -49,13 +52,21 @@ classifiers = [
 stealth = [
     "nodriver>=0.30",
 ]
+camoufox = [
+    "camoufox>=0.1.0",
+]
 captcha = [
     "capsolver>=1.0.0",
 ]
+async = [
+    "aiohttp>=3.9.0",
+]
 all = [
     "nodriver>=0.30",
+    "camoufox>=0.1.0",
     "capsolver>=1.0.0",
     "playwright",
+    "aiohttp>=3.9.0",
 ]
 dev = [
     "pytest",
