@@ -9,6 +9,10 @@
 
 Stop fighting with anti-bot systems. IntelliScrape handles the hard stuff so you can focus on your data.
 
+<div align="center">
+  <img src="demo.gif" alt="IntelliScrape Demo" width="800">
+</div>
+
 ---
 
 ## What is this?
@@ -359,3 +363,20 @@ MIT License - see [LICENSE](LICENSE) for details.
 ---
 
 **Built with ❤️ for the data community.**
+
+---
+
+## Generating the Demo GIF
+
+To regenerate the demo GIF:
+
+```bash
+# Install vhs (macOS)
+brew install charmbracelet/tap/vhs
+
+# Or using Go
+go install github.com/charmbracelet/vhs@latest
+
+# Generate the GIF
+vhs demo.tape
+```
