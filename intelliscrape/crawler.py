@@ -89,6 +89,7 @@ def crawl(
     max_pages: int = 50,
     delay: float = 0.5,
     log: Optional[Callable[[str], None]] = None,
+    on_page: Optional[Callable[[int, int], None]] = None,
 ) -> CrawlResult:
     """Crawl a website starting from the given URL.
 
@@ -102,6 +103,8 @@ def crawl(
         Delay between requests in seconds (default: 0.5).
     log : callable, optional
         Logging function for progress updates.
+    on_page : callable, optional
+        Callback with (pages_done, pages_failed) after each page.
 
     Returns
     -------
@@ -136,8 +139,8 @@ def crawl(
                 log(f"[{len(result.pages)+1}/{max_pages}] Scraping: {current_url}")
 
             try:
-                # Download the page
-                html = download_html(url=current_url, session=session)
+                # Download the page (follow redirects)
+                html = download_html(url=current_url, session=session, allow_redirects=True)
 
                 # Extract links for further crawling
                 new_links = _extract_links(html, url)
@@ -151,6 +154,8 @@ def crawl(
 
                 if log:
                     log(f"  OK - {len(content)} chars extracted")
+                if on_page:
+                    on_page(len(result.pages), len(result.failed))
 
             except Exception as exc:
                 result.failed.append(ScrapeResult(
@@ -160,6 +165,8 @@ def crawl(
                 ))
                 if log:
                     log(f"  FAILED - {exc}")
+                if on_page:
+                    on_page(len(result.pages), len(result.failed))
 
             # Rate limiting
             if delay > 0:

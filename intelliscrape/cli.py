@@ -11,6 +11,12 @@ import json
 import sys
 import io
 
+from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
+from rich.live import Live
+from rich.panel import Panel
+from rich.text import Text
+
 from .core import IntelliScrape, scrape
 from .crawler import crawl
 from .exceptions import IntelliScrapeError
@@ -19,6 +25,8 @@ from .exceptions import IntelliScrapeError
 # Fix Windows console encoding for Unicode output
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+
+console = Console()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -82,27 +90,37 @@ Examples:
         else:
             return _scrape(args)
     except IntelliScrapeError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
+        console.print(f"[red]Error:[/red] {exc}")
         return 1
     except Exception as exc:
-        print(f"Error: {exc}", file=sys.stderr)
+        console.print(f"[red]Error:[/red] {exc}")
         return 1
 
 
 def _scrape(args) -> int:
-    """Scrape a single page."""
+    """Scrape a single page with spinner."""
     scraper = IntelliScrape()
 
-    if args.json:
-        result = scraper.get_structured(args.url)
-        content = json.dumps(result.to_dict(), indent=2, ensure_ascii=False)
-    else:
-        content = scraper.scrape(args.url, return_raw=args.raw)
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task(f"Scraping {args.url}...", total=None)
+
+        if args.json:
+            result = scraper.get_structured(args.url)
+            content = json.dumps(result.to_dict(), indent=2, ensure_ascii=False)
+        else:
+            content = scraper.scrape(args.url, return_raw=args.raw)
+
+        progress.update(task, completed=True)
 
     if args.output:
         with open(args.output, "w", encoding="utf-8") as f:
             f.write(content)
-        print(f"Saved to {args.output}")
+        console.print(f"[green]Saved to {args.output}[/green]")
     else:
         print(content)
 
@@ -110,15 +128,36 @@ def _scrape(args) -> int:
 
 
 def _crawl(args) -> int:
-    """Crawl a website."""
-    def log(msg):
-        print(msg, file=sys.stderr)
+    """Crawl a website with progress bar."""
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Crawling...", total=args.max_pages)
 
-    result = crawl(
-        args.url,
-        max_pages=args.max_pages,
-        log=log,
-    )
+        def on_page(done, failed):
+            progress.update(task, completed=done + failed)
+
+        result = crawl(
+            args.url,
+            max_pages=args.max_pages,
+            on_page=on_page,
+        )
+
+        progress.update(task, completed=args.max_pages, description="Crawl complete!")
+
+    # Summary
+    console.print()
+    console.print(Panel(
+        f"[green]Scraped: {result.total_pages} pages[/green]\n"
+        f"[red]Failed: {result.total_failed} pages[/red]\n"
+        f"URL: {args.url}",
+        title="Crawl Summary",
+        border_style="blue",
+    ))
 
     if args.json:
         data = {
@@ -133,7 +172,7 @@ def _crawl(args) -> int:
     if args.output:
         with open(args.output, "w", encoding="utf-8") as f:
             f.write(content)
-        print(f"Saved {result.total_pages} pages to {args.output}")
+        console.print(f"[green]Saved {result.total_pages} pages to {args.output}[/green]")
     else:
         print(content)
 
