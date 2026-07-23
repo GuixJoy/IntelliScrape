@@ -4,6 +4,8 @@ Content extraction module for IntelliScrape.
 
 from __future__ import annotations
 
+from .structured import StructuredExtractor, StructuredData
+
 
 def extract_text(soup) -> str:
 
@@ -71,3 +73,6 @@ def extract_text(soup) -> str:
                 break
 
     return "\n".join(lines)
+
+
+__all__ = ["extract_text", "StructuredExtractor", "StructuredData"]

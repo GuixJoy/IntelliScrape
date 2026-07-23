@@ -11,16 +11,22 @@ import logging
 from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlsplit
 
+from .anti_detection.antibot import AntiBotDetector, AntiBotInfo
+from .anti_detection.behavior import HumanBehavior
+from .anti_detection.consent import CookieConsentHandler
 from .anti_detection.fingerprint import FingerprintGenerator
 from .anti_detection.headers import HeaderManager
+from .anti_detection.throttle import RateLimitConfig, RetryConfig, SmartThrottle
 from .anti_detection.tls import TLSConfig
 from .challenges.captcha import CaptchaDetector, CaptchaInfo, CaptchaSolver
 from .cleaner import clean_text
 from .engines.base import ScrapeResult
+from .engines.playwright_stealth import PlaywrightStealthEngine
 from .engines.static import StaticEngine
 from .engines.stealth import StealthEngine
 from .exceptions import IntelliScrapeError
 from .extractor import extract_text
+from .extractor.structured import StructuredExtractor, StructuredData
 from .parser import build_dom
 from .proxy import ProxyConfig, ProxyManager
 from .session import SessionManager
@@ -37,13 +43,18 @@ class IntelliScrape:
     """Advanced web scraper with anti-detection capabilities.
 
     Features:
-    - Multi-strategy engine selection (static + stealth browser)
+    - Multi-strategy engine selection (static, playwright_stealth, nodriver)
     - TLS fingerprint impersonation
     - Browser fingerprint randomization
     - Human-like behavioral simulation
     - Proxy rotation support
     - CAPTCHA detection and solving
     - Session persistence
+    - Smart retry with exponential backoff
+    - Rate limiting
+    - Anti-bot vendor detection
+    - Cookie consent handling
+    - Structured data extraction
 
     Examples
     --------
@@ -51,6 +62,14 @@ class IntelliScrape:
     >>> scraper = IntelliScrape()
     >>> result = scraper.scrape("https://example.com")
     >>> print(result)
+
+    >>> # With proxy and CAPTCHA solving
+    >>> scraper = IntelliScrape(
+    ...     proxy="user:pass@proxy:8080",
+    ...     api_key="your_api_key",
+    ...     captcha_provider="capsolver"
+    ... )
+    >>> result = scraper.scrape("https://protected-site.com")
     """
 
     def __init__(
@@ -64,6 +83,10 @@ class IntelliScrape:
         simulate_behavior: bool = True,
         tls_profile: str = "chrome131",
         session_profile: Optional[str] = None,
+        max_retries: int = 3,
+        min_delay: float = 0.5,
+        max_delay: float = 3.0,
+        requests_per_minute: Optional[int] = None,
         log_level: str = "WARNING",
     ):
         """Initialize IntelliScrape.
@@ -86,11 +109,20 @@ class IntelliScrape:
             TLS fingerprint profile to impersonate.
         session_profile : str, optional
             Persistent session profile name.
+        max_retries : int
+            Maximum number of retries.
+        min_delay : float
+            Minimum delay between requests (seconds).
+        max_delay : float
+            Maximum delay between requests (seconds).
+        requests_per_minute : int, optional
+            Rate limit (requests per minute).
         log_level : str
             Logging level.
         """
         # Configure logging
         logging.basicConfig(level=getattr(logging, log_level.upper()))
+        self.logger = logging.getLogger("intelliscrape")
 
         # Initialize proxy manager
         self.proxy_manager = ProxyManager()
@@ -109,16 +141,39 @@ class IntelliScrape:
         self.tls_config = TLSConfig(impersonate=tls_profile, randomize=True)
         self.fingerprint_gen = FingerprintGenerator()
 
-        # Initialize engines
-        self.static_engine = StaticEngine(
-            tls_profile=self.tls_config,
-            header_manager=self.header_manager,
+        # Initialize throttle
+        self.throttle = SmartThrottle(
+            retry_config=RetryConfig(max_retries=max_retries),
+            rate_config=RateLimitConfig(
+                min_delay=min_delay,
+                max_delay=max_delay,
+                requests_per_minute=requests_per_minute,
+            ),
         )
-        self.stealth_engine = StealthEngine(
-            fingerprint_generator=self.fingerprint_gen,
-            headless=headless,
-            simulate_behavior=simulate_behavior,
-        )
+
+        # Get proxy for engines
+        proxy_config = self.proxy_manager.get_proxy()
+
+        # Initialize engines (in order of preference)
+        self.engines = {
+            "static": StaticEngine(
+                tls_profile=self.tls_config,
+                header_manager=self.header_manager,
+                proxy=proxy_config,
+            ),
+            "playwright_stealth": PlaywrightStealthEngine(
+                fingerprint_generator=self.fingerprint_gen,
+                proxy=proxy_config,
+                headless=headless,
+                simulate_behavior=simulate_behavior,
+            ),
+            "nodriver": StealthEngine(
+                fingerprint_generator=self.fingerprint_gen,
+                proxy=proxy_config,
+                headless=headless,
+                simulate_behavior=simulate_behavior,
+            ),
+        }
 
         # Initialize CAPTCHA solver
         self.captcha_solver = None
@@ -133,6 +188,9 @@ class IntelliScrape:
         if session_profile:
             self.session_manager.set_current_profile(session_profile)
 
+        self.headless = headless
+        self.simulate_behavior = simulate_behavior
+
     def scrape(
         self,
         url: str,
@@ -141,8 +199,10 @@ class IntelliScrape:
         extract: bool = True,
         clean: bool = True,
         return_raw: bool = False,
+        return_structured: bool = False,
+        handle_consent: bool = True,
         **kwargs,
-    ) -> str:
+    ) -> Union[str, StructuredData]:
         """Scrape a URL and return text content.
 
         Parameters
@@ -150,7 +210,7 @@ class IntelliScrape:
         url : str
             Target URL.
         engine : str, optional
-            Force a specific engine ("static" or "stealth").
+            Force a specific engine ("static", "playwright_stealth", "nodriver").
             If None, auto-detect.
         extract : bool
             Extract text content from HTML.
@@ -158,11 +218,15 @@ class IntelliScrape:
             Clean extracted text.
         return_raw : bool
             Return raw HTML instead of extracted text.
+        return_structured : bool
+            Return StructuredData object with all metadata.
+        handle_consent : bool
+            Attempt to handle cookie consent banners.
 
         Returns
         -------
-        str
-            Extracted and cleaned text content.
+        str or StructuredData
+            Extracted content.
         """
         if not url:
             raise IntelliScrapeError("URL is required")
@@ -176,6 +240,24 @@ class IntelliScrape:
 
         if not result.success:
             raise IntelliScrapeError(f"Scraping failed: {result.error}")
+
+        # Detect anti-bot
+        antibot_info = AntiBotDetector.detect(
+            html=result.html,
+            headers=result.headers,
+            cookies=result.cookies,
+        )
+        if antibot_info:
+            self.logger.info(f"Anti-bot detected: {antibot_info.vendor.value} (confidence: {antibot_info.confidence:.2f})")
+
+        # Handle cookie consent
+        if handle_consent and result.html:
+            consent_info = CookieConsentHandler.detect(result.html)
+            if consent_info.has_consent:
+                self.logger.info(f"Cookie consent detected: {consent_info.consent_type}")
+
+        if return_structured:
+            return StructuredExtractor.extract(result.html, url)
 
         if return_raw:
             return result.html
@@ -201,9 +283,10 @@ class IntelliScrape:
         urls: List[str],
         *,
         engine: Optional[str] = None,
+        max_concurrent: int = 5,
         **kwargs,
     ) -> List[Dict[str, Any]]:
-        """Scrape multiple URLs.
+        """Scrape multiple URLs with rate limiting.
 
         Returns list of dicts with 'url', 'content', 'success', 'error'.
         """
@@ -224,7 +307,18 @@ class IntelliScrape:
                     "success": False,
                     "error": str(exc),
                 })
+
+            # Rate limiting
+            self.throttle.rate_limiter.wait_if_needed()
+
         return results
+
+    def get_structured(self, url: str, **kwargs) -> StructuredData:
+        """Get structured data from a URL.
+
+        Returns StructuredData with title, description, meta tags, JSON-LD, etc.
+        """
+        return self.scrape(url, return_structured=True, **kwargs)
 
     def _fetch(
         self,
@@ -233,26 +327,55 @@ class IntelliScrape:
         engine: Optional[str] = None,
         **kwargs,
     ) -> ScrapeResult:
-        """Fetch URL using the appropriate engine."""
-        if engine == "static":
-            return self.static_engine.fetch(url, **kwargs)
-        elif engine == "stealth":
-            return self.stealth_engine.fetch(url, **kwargs)
+        """Fetch URL using the appropriate engine with retry."""
+        if engine and engine in self.engines:
+            return self._fetch_with_engine(url, engine, **kwargs)
 
-        # Auto-detect: try static first, fallback to stealth
-        result = self.static_engine.fetch(url, **kwargs)
+        # Auto-detect: try engines in order of preference
+        engine_order = ["static", "playwright_stealth", "nodriver"]
 
-        if result.success:
-            # Check if we got meaningful content
-            if html_needs_browser(result.html):
-                logger.info("Static fetch returned JS-heavy content, switching to stealth")
-                result = self.stealth_engine.fetch(url, **kwargs)
-        else:
-            # Static failed, try stealth
-            logger.info("Static fetch failed, trying stealth engine")
-            result = self.stealth_engine.fetch(url, **kwargs)
+        for engine_name in engine_order:
+            result = self._fetch_with_engine(url, engine_name, **kwargs)
+            if result.success:
+                # Check if we got meaningful content
+                if not html_needs_browser(result.html):
+                    return result
+                # Content needs browser, try next engine
+                if engine_name == "static":
+                    continue
+                return result
 
+        # All engines failed, return last result
         return result
+
+    def _fetch_with_engine(self, url: str, engine_name: str, **kwargs) -> ScrapeResult:
+        """Fetch using a specific engine with retry."""
+        engine = self.engines.get(engine_name)
+        if not engine:
+            return ScrapeResult(
+                url=url, html="", status_code=0,
+                engine=engine_name, success=False,
+                error=f"Engine {engine_name} not available",
+            )
+
+        if not engine.is_available():
+            return ScrapeResult(
+                url=url, html="", status_code=0,
+                engine=engine_name, success=False,
+                error=f"Engine {engine_name} dependencies not installed",
+            )
+
+        def fetch():
+            return engine.fetch(url, **kwargs)
+
+        try:
+            return self.throttle.execute(fetch)
+        except Exception as exc:
+            return ScrapeResult(
+                url=url, html="", status_code=0,
+                engine=engine_name, success=False,
+                error=str(exc),
+            )
 
     def check_captcha(self, url: str) -> Optional[CaptchaInfo]:
         """Check if a URL has a CAPTCHA."""
@@ -261,12 +384,29 @@ class IntelliScrape:
             return CaptchaDetector.detect(result.html, url)
         return None
 
+    def check_antibot(self, url: str) -> Optional[AntiBotInfo]:
+        """Check anti-bot protection on a URL."""
+        result = self._fetch(url)
+        if result.success:
+            return AntiBotDetector.detect(
+                html=result.html,
+                headers=result.headers,
+                cookies=result.cookies,
+            )
+        return None
+
 
 def scrape(url: str, **kwargs) -> str:
     """Quick scrape function.
 
     This is the simple API for quick scraping.
     For advanced features, use the IntelliScrape class.
+
+    Examples
+    --------
+    >>> from intelliscrape import scrape
+    >>> text = scrape("https://example.com")
+    >>> print(text)
     """
     scraper = IntelliScrape()
     return scraper.scrape(url, **kwargs)

@@ -3,5 +3,13 @@
 from .base import BaseEngine, ScrapeResult
 from .static import StaticEngine
 from .stealth import StealthEngine
+from .playwright_stealth import PlaywrightStealthEngine, PlaywrightAsyncStealthEngine
 
-__all__ = ["BaseEngine", "ScrapeResult", "StaticEngine", "StealthEngine"]
+__all__ = [
+    "BaseEngine",
+    "ScrapeResult",
+    "StaticEngine",
+    "StealthEngine",
+    "PlaywrightStealthEngine",
+    "PlaywrightAsyncStealthEngine",
+]

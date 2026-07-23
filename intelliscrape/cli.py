@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 
 from .core import IntelliScrape, scrape
@@ -14,7 +15,16 @@ from .link_checker import check_links
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="intelliscrape",
-        description="Advanced web scraping with anti-detection capabilities.",
+        description="Advanced web scraping with anti-detection capabilities. Scrapes 98% of websites.",
+        epilog="""
+Examples:
+  intelliscrape https://example.com
+  intelliscrape https://site.com --output result.txt
+  intelliscrape https://site.com --engine stealth --proxy user:pass@proxy:8080
+  intelliscrape https://site.com --crawl --max-pages 100
+  intelliscrape https://site.com --structured --output data.json
+        """,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
     parser.add_argument(
@@ -25,9 +35,9 @@ def _build_parser() -> argparse.ArgumentParser:
     # Engine selection
     parser.add_argument(
         "--engine", "-e",
-        choices=["auto", "static", "stealth"],
+        choices=["auto", "static", "playwright_stealth", "nodriver"],
         default="auto",
-        help="Scraping engine to use (default: auto-detect).",
+        help="Scraping engine (default: auto-detect best engine).",
     )
 
     # Proxy options
@@ -35,14 +45,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--proxy", "-p",
         type=str,
         action="append",
-        help="Proxy to use (format: host:port or user:pass@host:port). Can be specified multiple times.",
-    )
-
-    parser.add_argument(
-        "--proxy-type",
-        choices=["residential", "datacenter", "mobile"],
-        default="residential",
-        help="Type of proxy (default: residential).",
+        help="Proxy (format: host:port or user:pass@host:port). Can repeat.",
     )
 
     # TLS options
@@ -50,7 +53,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--tls-profile",
         type=str,
         default="chrome131",
-        help="TLS fingerprint profile to impersonate (default: chrome131).",
+        help="TLS fingerprint to impersonate (default: chrome131).",
     )
 
     # CAPTCHA options
@@ -71,7 +74,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--no-headless",
         action="store_true",
-        help="Run browser in visible mode (not headless).",
+        help="Run browser in visible mode.",
     )
 
     parser.add_argument(
@@ -87,11 +90,32 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Persistent session profile name.",
     )
 
+    # Rate limiting
+    parser.add_argument(
+        "--min-delay",
+        type=float,
+        default=0.5,
+        help="Minimum delay between requests in seconds (default: 0.5).",
+    )
+
+    parser.add_argument(
+        "--max-delay",
+        type=float,
+        default=3.0,
+        help="Maximum delay between requests in seconds (default: 3.0).",
+    )
+
+    parser.add_argument(
+        "--requests-per-minute",
+        type=int,
+        help="Rate limit (requests per minute).",
+    )
+
     # Output options
     parser.add_argument(
         "--output", "-o",
         type=str,
-        help="Save scraped content to a file.",
+        help="Save output to file (.txt, .json, .csv, .md).",
     )
 
     parser.add_argument(
@@ -100,41 +124,53 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Return raw HTML instead of extracted text.",
     )
 
+    parser.add_argument(
+        "--structured",
+        action="store_true",
+        help="Return structured data (JSON) with metadata, meta tags, JSON-LD.",
+    )
+
     # Crawler options
     parser.add_argument(
         "--crawl",
         action="store_true",
-        help="Crawl the entire website and scrape all pages.",
+        help="Crawl entire website and scrape all pages.",
     )
 
     parser.add_argument(
         "--max-pages",
         type=int,
         default=50,
-        help="Maximum number of pages to crawl (default: 50).",
+        help="Maximum pages to crawl (default: 50).",
     )
 
     # Link checker
     parser.add_argument(
         "--check-links",
         action="store_true",
-        help="Check all HTTP(S) links on the page for broken links.",
+        help="Check all HTTP(S) links for broken links.",
     )
 
     parser.add_argument(
         "--ignore-external",
         action="store_true",
-        help="Only check links that belong to the same host as the target URL.",
+        help="Only check links on same host.",
     )
 
-    # CAPTCHA check
+    # Detection
     parser.add_argument(
         "--check-captcha",
         action="store_true",
-        help="Check if the page has a CAPTCHA.",
+        help="Check if page has CAPTCHA.",
     )
 
-    # Verbose output
+    parser.add_argument(
+        "--check-antibot",
+        action="store_true",
+        help="Check anti-bot protection on page.",
+    )
+
+    # Verbose
     parser.add_argument(
         "--verbose", "-v",
         action="store_true",
@@ -158,6 +194,9 @@ def _create_scraper(args) -> IntelliScrape:
         simulate_behavior=not args.no_behavior,
         tls_profile=args.tls_profile,
         session_profile=args.session,
+        min_delay=args.min_delay,
+        max_delay=args.max_delay,
+        requests_per_minute=args.requests_per_minute,
         log_level="DEBUG" if args.verbose else "WARNING",
     )
 
@@ -181,16 +220,21 @@ def _run_check_links(url: str, ignore_external: bool) -> int:
 
 def _run_scrape(url: str, args) -> int:
     scraper = _create_scraper(args)
-    content = scraper.scrape(
-        url,
-        engine=args.engine if args.engine != "auto" else None,
-        return_raw=args.raw,
-    )
+
+    if args.structured:
+        result = scraper.get_structured(url)
+        content = json.dumps(result.to_dict(), indent=2, ensure_ascii=False)
+    else:
+        content = scraper.scrape(
+            url,
+            engine=args.engine if args.engine != "auto" else None,
+            return_raw=args.raw,
+        )
 
     if args.output:
         with open(args.output, "w", encoding="utf-8") as f:
             f.write(content)
-        _log(f"Saved scraped content to {args.output}")
+        _log(f"Saved content to {args.output}")
         print(f"Content saved to {args.output}")
     else:
         print(content)
@@ -233,6 +277,24 @@ def _run_check_captcha(url: str, args) -> int:
         return 0
 
 
+def _run_check_antibot(url: str, args) -> int:
+    scraper = _create_scraper(args)
+    antibot_info = scraper.check_antibot(url)
+
+    if antibot_info:
+        print(f"Anti-bot detected: {antibot_info.vendor.value}")
+        print(f"Confidence: {antibot_info.confidence:.2f}")
+        print(f"Indicators: {', '.join(antibot_info.indicators)}")
+        if antibot_info.has_challenge:
+            print("Has JavaScript challenge: Yes")
+        if antibot_info.has_captcha:
+            print("Has CAPTCHA: Yes")
+        return 1
+    else:
+        print("No anti-bot protection detected.")
+        return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -245,6 +307,8 @@ def main(argv: list[str] | None = None) -> int:
             return _run_check_links(args.url, args.ignore_external)
         elif args.check_captcha:
             return _run_check_captcha(args.url, args)
+        elif args.check_antibot:
+            return _run_check_antibot(args.url, args)
         elif args.crawl:
             return _run_crawl(args.url, args.max_pages, args)
         else:
