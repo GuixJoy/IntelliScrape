@@ -5,8 +5,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "intelliscrape"
-version = "1.0.1"
-description = "Smart Python web scraping library with automatic static and dynamic website detection"
+version = "2.0.0"
+description = "Advanced web scraping library with anti-detection, TLS impersonation, and stealth browsing"
 readme = "README.md"
 license = {text = "MIT"}
 
@@ -20,24 +20,57 @@ dependencies = [
     "requests",
     "beautifulsoup4",
     "lxml",
-    "playwright"
+    "curl_cffi>=0.7.0",
 ]
-
 
 keywords = [
     "web scraping",
+    "anti-detection",
+    "stealth browser",
+    "tls fingerprint",
+    "captcha solving",
+    "proxy rotation",
     "python scraper",
     "playwright",
     "beautifulsoup",
-    "data extraction"
+    "data extraction",
 ]
-
 
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent"
+    "Operating System :: OS Independent",
+    "Topic :: Internet :: WWW/HTTP :: Indexing/Search",
+    "Topic :: Software Development :: Libraries :: Python Modules",
 ]
+
+
+[project.optional-dependencies]
+stealth = [
+    "nodriver>=0.30",
+]
+captcha = [
+    "capsolver>=1.0.0",
+]
+all = [
+    "nodriver>=0.30",
+    "capsolver>=1.0.0",
+    "playwright",
+]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "black",
+    "ruff",
+]
+
 
 [project.scripts]
 intelliscrape = "intelliscrape.cli:main"
+
+
+[project.urls]
+Homepage = "https://github.com/GuixJoy/IntelliScrape"
+Documentation = "https://github.com/GuixJoy/IntelliScrape#readme"
+Repository = "https://github.com/GuixJoy/IntelliScrape"
+Issues = "https://github.com/GuixJoy/IntelliScrape/issues"
