@@ -22,6 +22,8 @@ from .forms import FormSubmitter
 from .pagination import Paginator
 from .export import DataExporter
 from .downloader import Downloader
+from .cookies import CookieManager
+from .interceptor import RequestInterceptor
 from .exceptions import IntelliScrapeError
 
 
@@ -44,6 +46,20 @@ Examples:
   intelliscrape https://example.com -o output.txt
   intelliscrape https://example.com --json
   
+  # Login and scrape
+  intelliscrape https://site.com --login --username user --password pass
+  
+  # Save/load cookies
+  intelliscrape https://site.com --save-cookies cookies.json
+  intelliscrape https://site.com --load-cookies cookies.json
+  
+  # Block URLs
+  intelliscrape https://site.com --block "analytics,tracking,ads"
+  
+  # Custom headers
+  intelliscrape https://site.com --header "Authorization: Bearer xxx"
+  intelliscrape https://site.com --header "X-API-Key: 123"
+  
   # Pagination
   intelliscrape https://example.com/products --paginate --max-pages 10
   
@@ -57,7 +73,6 @@ Examples:
   # Export formats
   intelliscrape https://example.com --export csv -o data.csv
   intelliscrape https://example.com --export json -o data.json
-  intelliscrape https://example.com --export excel -o data.xlsx
   
   # Crawl entire site
   intelliscrape https://docs.python.org --crawl --max-pages 50
@@ -71,6 +86,20 @@ Examples:
     parser.add_argument("-o", "--output", help="Save output to file")
     parser.add_argument("--json", action="store_true", help="Output structured JSON")
     parser.add_argument("--raw", action="store_true", help="Output raw HTML")
+
+    # Authentication
+    parser.add_argument("--login", action="store_true", help="Login to site")
+    parser.add_argument("--username", type=str, help="Login username/email")
+    parser.add_argument("--password", type=str, help="Login password")
+    parser.add_argument("--login-url", type=str, help="Explicit login URL")
+
+    # Cookies
+    parser.add_argument("--save-cookies", type=str, help="Save cookies to file")
+    parser.add_argument("--load-cookies", type=str, help="Load cookies from file")
+
+    # Request modification
+    parser.add_argument("--block", type=str, help="Block URLs (comma-separated patterns)")
+    parser.add_argument("--header", type=str, action="append", help="Add header (Key: Value)")
 
     # Pagination
     parser.add_argument("--paginate", action="store_true", help="Auto-follow pagination")
@@ -118,10 +147,74 @@ Examples:
         return 1
 
 
-def _scrape(args) -> int:
-    """Scrape a single page with spinner."""
+def _create_scraper(args) -> IntelliScrape:
+    """Create scraper with CLI options."""
+    # Parse headers
+    headers = {}
+    if args.header:
+        for h in args.header:
+            if ":" in h:
+                key, value = h.split(":", 1)
+                headers[key.strip()] = value.strip()
+
+    # Create scraper
     scraper = IntelliScrape()
 
+    # Apply headers to all engines
+    if headers:
+        for engine in scraper.engines.values():
+            if hasattr(engine, 'session'):
+                engine.session.headers.update(headers)
+            if hasattr(engine, 'headers'):
+                engine.headers.update(headers)
+
+    return scraper
+
+
+def _scrape(args) -> int:
+    """Scrape a single page with spinner."""
+    scraper = _create_scraper(args)
+
+    # Handle login
+    if args.login:
+        if not args.username or not args.password:
+            console.print("[red]Error: --username and --password required for login[/red]")
+            return 1
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+            transient=True,
+        ) as progress:
+            task = progress.add_task(f"Logging in to {args.url}...", total=None)
+
+            auth = Authenticator(scraper.session_manager.session)
+            credentials = LoginCredentials(
+                username=args.username,
+                password=args.password,
+            )
+            success = auth.login(args.url, credentials, login_url=args.login_url)
+
+            progress.update(task, completed=True)
+
+        if success:
+            console.print("[green]Login successful![/green]")
+        else:
+            console.print("[yellow]Login failed, continuing anyway...[/yellow]")
+
+    # Load cookies
+    if args.load_cookies:
+        cookie_mgr = CookieManager()
+        try:
+            with open(args.load_cookies, "r") as f:
+                cookies = json.load(f)
+            cookie_mgr.save_cookies(args.url, cookies)
+            console.print(f"[green]Loaded cookies from {args.load_cookies}[/green]")
+        except Exception as e:
+            console.print(f"[yellow]Could not load cookies: {e}[/yellow]")
+
+    # Scrape
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -137,6 +230,20 @@ def _scrape(args) -> int:
             content = scraper.scrape(args.url, return_raw=args.raw, force_browser=args.force_browser)
 
         progress.update(task, completed=True)
+
+    # Save cookies
+    if args.save_cookies:
+        cookie_mgr = CookieManager()
+        # Get cookies from the scraper's engines
+        cookies = {}
+        for engine in scraper.engines.values():
+            if hasattr(engine, 'session'):
+                cookies.update(dict(engine.session.cookies))
+                break
+        cookie_mgr.save_cookies(args.url, cookies)
+        with open(args.save_cookies, "w") as f:
+            json.dump(cookies, f, indent=2)
+        console.print(f"[green]Saved cookies to {args.save_cookies}[/green]")
 
     # Export
     if args.export:
@@ -154,7 +261,7 @@ def _scrape(args) -> int:
 
 def _paginate(args) -> int:
     """Scrape with pagination."""
-    scraper = IntelliScrape()
+    scraper = _create_scraper(args)
     paginator = Paginator()
 
     with Progress(
@@ -220,7 +327,7 @@ def _paginate(args) -> int:
 
 def _search(args) -> int:
     """Submit search and scrape results."""
-    scraper = IntelliScrape()
+    scraper = _create_scraper(args)
     form_submitter = FormSubmitter()
 
     with Progress(
@@ -265,6 +372,8 @@ def _search(args) -> int:
 
 def _crawl(args) -> int:
     """Crawl a website with progress bar."""
+    scraper = _create_scraper(args)
+
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -314,7 +423,7 @@ def _crawl(args) -> int:
 
 def _download(args) -> int:
     """Download files from page."""
-    scraper = IntelliScrape()
+    scraper = _create_scraper(args)
     downloader = Downloader()
 
     with Progress(
