@@ -56,6 +56,41 @@ WebGLRenderingContext.prototype.getParameter = function(parameter) {
     }
     return getParameter.apply(this, arguments);
 };
+
+// Override navigator.connection
+Object.defineProperty(navigator, 'connection', {
+    get: () => ({
+        rtt: 50,
+        downlink: 10,
+        effectiveType: '4g',
+        saveData: false
+    })
+});
+
+// Override navigator.hardwareConcurrency
+Object.defineProperty(navigator, 'hardwareConcurrency', {
+    get: () => 8
+});
+
+// Override navigator.deviceMemory
+Object.defineProperty(navigator, 'deviceMemory', {
+    get: () => 8
+});
+
+// Override screen dimensions
+Object.defineProperty(screen, 'width', { get: () => 1920 });
+Object.defineProperty(screen, 'height', { get: () => 1080 });
+Object.defineProperty(screen, 'availWidth', { get: () => 1920 });
+Object.defineProperty(screen, 'availHeight', { get: () => 1040 });
+Object.defineProperty(screen, 'colorDepth', { get: () => 24 });
+
+// Override Date to prevent timezone fingerprinting
+const OriginalDate = Date;
+const originalGetMinutes = OriginalDate.prototype.getMinutes;
+OriginalDate.prototype.getMinutes = function() {
+    const date = new OriginalDate(this);
+    return originalGetMinutes.call(date);
+};
 """
 
 
@@ -96,8 +131,8 @@ class PlaywrightStealthEngine(BaseEngine):
         *,
         headers: Optional[Dict[str, str]] = None,
         cookies: Optional[Dict[str, str]] = None,
-        timeout: float = 30.0,
-        wait_until: str = "networkidle",
+        timeout: float = 60.0,
+        wait_until: str = "domcontentloaded",
         scroll: bool = True,
         **kwargs,
     ) -> ScrapeResult:
@@ -121,6 +156,13 @@ class PlaywrightStealthEngine(BaseEngine):
                     "--disable-blink-features=AutomationControlled",
                     "--disable-features=IsolateOrigins,site-per-process",
                     "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-accelerated-2d-canvas",
+                    "--disable-gpu",
+                    "--window-size=1920,1080",
+                    "--disable-blink-features=AutomationControlled",
+                    "--excludeSwitches=enable-automation",
+                    "--use-gl=swiftshader",
                 ]
 
                 if self.proxy:
