@@ -13,12 +13,14 @@ import io
 
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
-from rich.live import Live
 from rich.panel import Panel
-from rich.text import Text
 
 from .core import IntelliScrape, scrape
 from .crawler import crawl
+from .auth import Authenticator, LoginCredentials
+from .forms import FormSubmitter
+from .pagination import Paginator
+from .export import DataExporter
 from .exceptions import IntelliScrapeError
 
 
@@ -36,54 +38,51 @@ def main(argv: list[str] | None = None) -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  intelliscrape https://example.com                    # Scrape and print
-  intelliscrape https://example.com -o output.txt     # Save to file
-  intelliscrape https://example.com --json             # Get JSON with metadata
-  intelliscrape https://example.com --json -o data.json  # Save JSON
-  intelliscrape https://docs.python.org --crawl        # Crawl entire site
+  # Basic scraping
+  intelliscrape https://example.com
+  intelliscrape https://example.com -o output.txt
+  intelliscrape https://example.com --json
+  
+  # Pagination
+  intelliscrape https://example.com/products --paginate --max-pages 10
+  
+  # Form submission
+  intelliscrape https://google.com --search "python scraping"
+  
+  # Export formats
+  intelliscrape https://example.com --export csv -o data.csv
+  intelliscrape https://example.com --export json -o data.json
+  intelliscrape https://example.com --export excel -o data.xlsx
+  
+  # Crawl entire site
+  intelliscrape https://docs.python.org --crawl --max-pages 50
         """,
     )
 
-    parser.add_argument(
-        "url",
-        help="URL to scrape",
-    )
+    # Main URL
+    parser.add_argument("url", help="URL to scrape")
 
-    parser.add_argument(
-        "-o", "--output",
-        help="Save output to file",
-    )
+    # Output options
+    parser.add_argument("-o", "--output", help="Save output to file")
+    parser.add_argument("--json", action="store_true", help="Output structured JSON")
+    parser.add_argument("--raw", action="store_true", help="Output raw HTML")
 
-    parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Output structured JSON with metadata",
-    )
+    # Pagination
+    parser.add_argument("--paginate", action="store_true", help="Auto-follow pagination")
+    parser.add_argument("--max-pages", type=int, default=50, help="Max pages to scrape")
 
-    parser.add_argument(
-        "--crawl",
-        action="store_true",
-        help="Crawl entire website",
-    )
+    # Search
+    parser.add_argument("--search", type=str, help="Submit search query")
 
-    parser.add_argument(
-        "--max-pages",
-        type=int,
-        default=50,
-        help="Max pages to crawl (default: 50)",
-    )
+    # Export
+    parser.add_argument("--export", choices=["json", "csv", "excel", "sqlite", "text", "markdown"],
+                       help="Export format")
 
-    parser.add_argument(
-        "--raw",
-        action="store_true",
-        help="Output raw HTML",
-    )
+    # Crawl
+    parser.add_argument("--crawl", action="store_true", help="Crawl entire website")
 
-    parser.add_argument(
-        "--force-browser",
-        action="store_true",
-        help="Force browser engine for JS-heavy sites",
-    )
+    # Force browser
+    parser.add_argument("--force-browser", action="store_true", help="Force browser engine")
 
     args = parser.parse_args(argv)
 
@@ -93,6 +92,10 @@ Examples:
     try:
         if args.crawl:
             return _crawl(args)
+        elif args.paginate:
+            return _paginate(args)
+        elif args.search:
+            return _search(args)
         else:
             return _scrape(args)
     except IntelliScrapeError as exc:
@@ -123,12 +126,127 @@ def _scrape(args) -> int:
 
         progress.update(task, completed=True)
 
+    # Export
+    if args.export:
+        return _export_content(content, args.export, args.output, args.url)
+
     if args.output:
         with open(args.output, "w", encoding="utf-8") as f:
             f.write(content)
         console.print(f"[green]Saved to {args.output}[/green]")
     else:
         print(content)
+
+    return 0
+
+
+def _paginate(args) -> int:
+    """Scrape with pagination."""
+    scraper = IntelliScrape()
+    paginator = Paginator()
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Paginating...", total=args.max_pages)
+
+        pages = []
+        current_url = args.url
+        current_page = 1
+
+        while current_url and current_page <= args.max_pages:
+            # Fetch page
+            content = scraper.scrape(current_url, force_browser=args.force_browser)
+            pages.append({"url": current_url, "content": content, "page": current_page})
+
+            progress.update(task, advance=1, description=f"Page {current_page}...")
+
+            # Find next page
+            html = scraper.scrape(current_url, return_raw=True, force_browser=args.force_browser)
+            current_url = paginator.find_next_page(html, current_url, current_page)
+            current_page += 1
+
+        progress.update(task, completed=args.max_pages, description="Pagination complete!")
+
+    # Summary
+    console.print()
+    console.print(Panel(
+        f"[green]Scraped: {len(pages)} pages[/green]\n"
+        f"URL: {args.url}",
+        title="Pagination Summary",
+        border_style="blue",
+    ))
+
+    # Export
+    if args.export:
+        return _export_content(pages, args.export, args.output, args.url)
+
+    if args.output:
+        with open(args.output, "w", encoding="utf-8") as f:
+            for page in pages:
+                f.write(f"{'='*80}\n")
+                f.write(f"URL: {page['url']}\n")
+                f.write(f"Page: {page['page']}\n")
+                f.write(f"{'='*80}\n\n")
+                f.write(page['content'])
+                f.write("\n\n")
+        console.print(f"[green]Saved {len(pages)} pages to {args.output}[/green]")
+    else:
+        for page in pages:
+            print(f"\n{'='*80}")
+            print(f"URL: {page['url']}")
+            print(f"Page: {page['page']}")
+            print(f"{'='*80}\n")
+            print(page['content'])
+
+    return 0
+
+
+def _search(args) -> int:
+    """Submit search and scrape results."""
+    scraper = IntelliScrape()
+    form_submitter = FormSubmitter()
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task(f"Searching '{args.search}'...", total=None)
+
+        # Get the page
+        html = scraper.scrape(args.url, return_raw=True, force_browser=args.force_browser)
+
+        # Find and submit search form
+        result_html = form_submitter.search(
+            html,
+            args.search,
+            base_url=args.url,
+        )
+
+        progress.update(task, completed=True)
+
+    if result_html:
+        # Extract text from results
+        content = scraper.scrape(args.url, force_browser=args.force_browser)
+
+        # Export
+        if args.export:
+            return _export_content(content, args.export, args.output, args.url)
+
+        if args.output:
+            with open(args.output, "w", encoding="utf-8") as f:
+                f.write(content)
+            console.print(f"[green]Saved to {args.output}[/green]")
+        else:
+            print(content)
+    else:
+        console.print("[yellow]No search form found[/yellow]")
 
     return 0
 
@@ -165,22 +283,38 @@ def _crawl(args) -> int:
         border_style="blue",
     ))
 
-    if args.json:
-        data = {
-            "base_url": result.base_url,
-            "total_pages": result.total_pages,
-            "pages": [{"url": p.url, "content": p.content} for p in result.pages],
-        }
-        content = json.dumps(data, indent=2, ensure_ascii=False)
-    else:
-        content = result.to_text()
+    # Convert to exportable format
+    pages = [{"url": p.url, "content": p.content} for p in result.pages]
+
+    # Export
+    if args.export:
+        return _export_content(pages, args.export, args.output, args.url)
 
     if args.output:
         with open(args.output, "w", encoding="utf-8") as f:
-            f.write(content)
+            f.write(result.to_text())
         console.print(f"[green]Saved {result.total_pages} pages to {args.output}[/green]")
     else:
-        print(content)
+        print(result.to_text())
+
+    return 0
+
+
+def _export_content(content, format: str, output: str, url: str) -> int:
+    """Export content to specified format."""
+    if isinstance(content, str):
+        # Parse text content into structured data
+        data = [{"url": url, "content": content}]
+    else:
+        data = content
+
+    # Determine output filename
+    if not output:
+        output = f"output.{format if format != 'markdown' else 'md'}"
+
+    # Export
+    result = DataExporter.export(data, format=format, file=output)
+    console.print(f"[green]Exported to {output} ({format})[/green]")
 
     return 0
 

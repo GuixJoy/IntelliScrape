@@ -20,6 +20,10 @@ Features:
 - Structured data extraction
 - Async support for concurrent scraping
 - Proxy provider integrations (Bright Data, ScraperAPI, Oxylabs)
+- Authentication and session persistence
+- Form submission and search
+- Auto-pagination
+- Data export (JSON, CSV, Excel, SQLite, Markdown)
 
 Quick Start:
     >>> from intelliscrape import scrape
@@ -31,13 +35,25 @@ Advanced Usage:
     >>> result = scraper.scrape("https://protected-site.com")
     >>> structured = scraper.get_structured("https://example.com")
 
-Async Usage:
-    >>> import asyncio
-    >>> from intelliscrape import AsyncIntelliScrape
-    >>> 
-    >>> async def main():
-    ...     async with AsyncIntelliScrape() as scraper:
-    ...         results = await scraper.scrape_many(urls)
+Authentication:
+    >>> from intelliscrape import IntelliScrape, LoginCredentials
+    >>> scraper = IntelliScrape()
+    >>> scraper.login("https://example.com", LoginCredentials(username="user", password="pass"))
+    >>> scraper.scrape("https://example.com/dashboard")
+
+Form Submission:
+    >>> from intelliscrape import IntelliScrape
+    >>> scraper = IntelliScrape()
+    >>> scraper.submit_form("https://google.com/search", {"q": "python scraping"})
+
+Pagination:
+    >>> from intelliscrape import IntelliScrape
+    >>> scraper = IntelliScrape()
+    >>> pages = scraper.scrape_all_pages("https://example.com/products", max_pages=10)
+
+Export:
+    >>> from intelliscrape import DataExporter
+    >>> DataExporter.export(data, format="csv", file="output.csv")
 """
 
 from .core import IntelliScrape, scrape
@@ -66,8 +82,12 @@ from .anti_detection.bypass import (
 )
 from .extractor.structured import StructuredExtractor, StructuredData
 from .async_scraper import AsyncIntelliScrape, scrape_async, scrape_many_async
+from .auth import Authenticator, LoginCredentials, AuthSession
+from .forms import FormSubmitter, Form, FormField
+from .pagination import Paginator, PageInfo
+from .export import DataExporter
 
-__version__ = "2.1.0"
+__version__ = "2.2.0"
 
 __all__ = [
     # Main API
@@ -105,6 +125,19 @@ __all__ = [
     # Structured data
     "StructuredExtractor",
     "StructuredData",
+    # Authentication
+    "Authenticator",
+    "LoginCredentials",
+    "AuthSession",
+    # Forms
+    "FormSubmitter",
+    "Form",
+    "FormField",
+    # Pagination
+    "Paginator",
+    "PageInfo",
+    # Export
+    "DataExporter",
     # Re-exports
     "ScrapeResult",
 ]
