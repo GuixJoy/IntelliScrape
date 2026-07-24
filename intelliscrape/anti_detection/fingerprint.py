@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import random
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
@@ -27,6 +28,19 @@ class BrowserFingerprint:
     webgl_renderer: str = "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 Direct3D11 vs_5_0 ps_5_0)"
     canvas_hash: Optional[str] = None
     audio_context_hash: Optional[str] = None
+    # Canvas fingerprint data (simulated)
+    canvas_data: Optional[str] = None
+    # WebGL fingerprint data
+    webgl_extensions: List[str] = field(default_factory=lambda: [
+        "WEBGL_debug_renderer_info",
+        "EXT_texture_filter_anisotropic",
+        "WEBGL_compressed_texture_s3tc",
+    ])
+    webgl_params: Dict[str, int] = field(default_factory=lambda: {
+        "MAX_TEXTURE_SIZE": 16384,
+        "MAX_VERTEX_ATTRIBS": 16,
+        "MAX_VIEWPORT_DIMS": [32767, 32767],
+    })
 
 
 # Predefined realistic profiles
@@ -88,6 +102,19 @@ _LINUX_PROFILES = [
 ]
 
 
+def _generate_canvas_hash(seed: str) -> str:
+    """Generate a realistic canvas fingerprint hash."""
+    # Simulate canvas fingerprinting with deterministic but unique hash
+    canvas_str = f"canvas_fingerprint_{seed}_{random.randint(1000, 9999)}"
+    return hashlib.md5(canvas_str.encode()).hexdigest()[:16]
+
+
+def _generate_audio_hash(seed: str) -> str:
+    """Generate a realistic audio context fingerprint hash."""
+    audio_str = f"audio_context_{seed}_{random.randint(1000, 9999)}"
+    return hashlib.md5(audio_str.encode()).hexdigest()[:12]
+
+
 class FingerprintGenerator:
     """Generates randomized browser fingerprints."""
 
@@ -121,17 +148,62 @@ class FingerprintGenerator:
             "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles",
             "Europe/London", "Europe/Paris", "Europe/Berlin", "Asia/Tokyo", "Asia/Shanghai",
         ])
+        
+        # Generate canvas and audio fingerprints
+        seed_str = f"{fp.platform}_{fp.screen_width}_{fp.hardware_concurrency}"
+        fp.canvas_hash = _generate_canvas_hash(seed_str)
+        fp.audio_context_hash = _generate_audio_hash(seed_str)
+        fp.canvas_data = f"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
 
         return fp
 
-    def get_js_overrides(self, fp: BrowserFingerprint) -> Dict[str, str]:
+    def get_js_overrides(self, fp: BrowserFingerprint) -> str:
         """Get JavaScript overrides for the fingerprint."""
         return f"""
+        // Hardware
         Object.defineProperty(navigator, 'hardwareConcurrency', {{get: () => {fp.hardware_concurrency}}});
         Object.defineProperty(navigator, 'deviceMemory', {{get: () => {fp.device_memory}}});
         Object.defineProperty(navigator, 'platform', {{get: () => '{fp.platform}'}});
+        
+        // Screen
         Object.defineProperty(screen, 'width', {{get: () => {fp.screen_width}}});
         Object.defineProperty(screen, 'height', {{get: () => {fp.screen_height}}});
         Object.defineProperty(screen, 'colorDepth', {{get: () => {fp.color_depth}}});
+        Object.defineProperty(screen, 'pixelDepth', {{get: () => {fp.color_depth}}});
+        
+        // Language
         Object.defineProperty(navigator, 'language', {{get: () => '{fp.language}'}});
+        Object.defineProperty(navigator, 'languages', {{get: () => {fp.languages}}});
+        
+        // Timezone
+        Date.prototype.getTimezoneOffset = function() {{ return {fp.timezone_offset}; }};
+        
+        // WebGL
+        const getParameter = WebGLRenderingContext.prototype.getParameter;
+        WebGLRenderingContext.prototype.getParameter = function(parameter) {{
+            if (parameter === 37445) return '{fp.webgl_vendor}';
+            if (parameter === 37446) return '{fp.webgl_renderer}';
+            return getParameter.apply(this, arguments);
+        }};
+        
+        // Canvas fingerprint
+        const toDataURL = HTMLCanvasElement.prototype.toDataURL;
+        HTMLCanvasElement.prototype.toDataURL = function(type) {{
+            if (type === 'image/png' && this.width === 16 && this.height === 16) {{
+                return '{fp.canvas_data}';
+            }}
+            return toDataURL.apply(this, arguments);
+        }};
+        
+        // Audio context
+        const audioContext = window.AudioContext || window.webkitAudioContext;
+        if (audioContext) {{
+            const originalGetChannelData = AudioBuffer.prototype.getChannelData;
+            AudioBuffer.prototype.getChannelData = function() {{
+                const data = originalGetChannelData.apply(this, arguments);
+                // Slight modification to audio fingerprint
+                data[0] = data[0] + 0.0001;
+                return data;
+            }};
+        }}
         """
