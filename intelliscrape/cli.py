@@ -21,6 +21,7 @@ from .auth import Authenticator, LoginCredentials
 from .forms import FormSubmitter
 from .pagination import Paginator
 from .export import DataExporter
+from .downloader import Downloader
 from .exceptions import IntelliScrapeError
 
 
@@ -46,8 +47,12 @@ Examples:
   # Pagination
   intelliscrape https://example.com/products --paginate --max-pages 10
   
-  # Form submission
+  # Search
   intelliscrape https://google.com --search "python scraping"
+  
+  # Download files
+  intelliscrape https://example.com --download
+  intelliscrape https://example.com --download-images
   
   # Export formats
   intelliscrape https://example.com --export csv -o data.csv
@@ -81,6 +86,11 @@ Examples:
     # Crawl
     parser.add_argument("--crawl", action="store_true", help="Crawl entire website")
 
+    # Downloads
+    parser.add_argument("--download", action="store_true", help="Download linked files")
+    parser.add_argument("--download-images", action="store_true", help="Download all images")
+    parser.add_argument("--download-dir", default="downloads", help="Download directory")
+
     # Force browser
     parser.add_argument("--force-browser", action="store_true", help="Force browser engine")
 
@@ -96,6 +106,8 @@ Examples:
             return _paginate(args)
         elif args.search:
             return _search(args)
+        elif args.download or args.download_images:
+            return _download(args)
         else:
             return _scrape(args)
     except IntelliScrapeError as exc:
@@ -296,6 +308,45 @@ def _crawl(args) -> int:
         console.print(f"[green]Saved {result.total_pages} pages to {args.output}[/green]")
     else:
         print(result.to_text())
+
+    return 0
+
+
+def _download(args) -> int:
+    """Download files from page."""
+    scraper = IntelliScrape()
+    downloader = Downloader()
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task(f"Downloading from {args.url}...", total=None)
+
+        # Get the page
+        html = scraper.scrape(args.url, return_raw=True, force_browser=args.force_browser)
+
+        if args.download_images:
+            results = downloader.download_images(html, args.url, args.download_dir)
+        else:
+            results = downloader.download_links(html, args.url, args.download_dir)
+
+        progress.update(task, completed=True)
+
+    # Summary
+    successful = sum(1 for r in results if r.success)
+    failed = sum(1 for r in results if not r.success)
+
+    console.print()
+    console.print(Panel(
+        f"[green]Downloaded: {successful} files[/green]\n"
+        f"[red]Failed: {failed} files[/red]\n"
+        f"Directory: {args.download_dir}",
+        title="Download Summary",
+        border_style="blue",
+    ))
 
     return 0
 

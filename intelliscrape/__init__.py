@@ -24,6 +24,10 @@ Features:
 - Form submission and search
 - Auto-pagination
 - Data export (JSON, CSV, Excel, SQLite, Markdown)
+- File downloads (images, PDFs, documents)
+- Smart retries with engine fallback
+- Cookie persistence
+- Request/response interception
 
 Quick Start:
     >>> from intelliscrape import scrape
@@ -41,15 +45,17 @@ Authentication:
     >>> scraper.login("https://example.com", LoginCredentials(username="user", password="pass"))
     >>> scraper.scrape("https://example.com/dashboard")
 
-Form Submission:
-    >>> from intelliscrape import IntelliScrape
-    >>> scraper = IntelliScrape()
-    >>> scraper.submit_form("https://google.com/search", {"q": "python scraping"})
+File Downloads:
+    >>> from intelliscrape import Downloader
+    >>> downloader = Downloader()
+    >>> result = downloader.download("https://example.com/file.pdf")
+    >>> images = downloader.download_images(html, base_url)
 
-Pagination:
-    >>> from intelliscrape import IntelliScrape
-    >>> scraper = IntelliScrape()
-    >>> pages = scraper.scrape_all_pages("https://example.com/products", max_pages=10)
+Request Interception:
+    >>> from intelliscrape import RequestInterceptor
+    >>> interceptor = RequestInterceptor()
+    >>> interceptor.block_urls([".*\\.analytics\\..*", ".*tracking.*"])
+    >>> interceptor.modify_headers({"X-Custom-Header": "value"})
 
 Export:
     >>> from intelliscrape import DataExporter
@@ -86,6 +92,10 @@ from .auth import Authenticator, LoginCredentials, AuthSession
 from .forms import FormSubmitter, Form, FormField
 from .pagination import Paginator, PageInfo
 from .export import DataExporter
+from .downloader import Downloader, DownloadResult
+from .retry import SmartRetry, RetryConfig, RetryAttempt
+from .cookies import CookieManager, CookieData
+from .interceptor import RequestInterceptor, ResponseModifier, InterceptedRequest, InterceptedResponse
 
 __version__ = "2.2.0"
 
@@ -138,6 +148,21 @@ __all__ = [
     "PageInfo",
     # Export
     "DataExporter",
+    # Downloads
+    "Downloader",
+    "DownloadResult",
+    # Retry
+    "SmartRetry",
+    "RetryConfig",
+    "RetryAttempt",
+    # Cookies
+    "CookieManager",
+    "CookieData",
+    # Interception
+    "RequestInterceptor",
+    "ResponseModifier",
+    "InterceptedRequest",
+    "InterceptedResponse",
     # Re-exports
     "ScrapeResult",
 ]
