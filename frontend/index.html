@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IntelliScrape - Web Scraper</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background: #0f172a; }
+        .glass { background: rgba(30, 41, 59, 0.8); backdrop-filter: blur(10px); }
+        .gradient { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+        .pulse { animation: pulse 2s infinite; }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+    </style>
+</head>
+<body class="min-h-screen text-white">
+    <div class="container mx-auto px-4 py-12">
+        <!-- Header -->
+        <div class="text-center mb-12">
+            <h1 class="text-5xl font-bold mb-4 gradient bg-clip-text text-transparent">
+                IntelliScrape
+            </h1>
+            <p class="text-gray-400 text-lg">Scrape any website in seconds. No code required.</p>
+        </div>
+
+        <!-- Main Card -->
+        <div class="max-w-4xl mx-auto glass rounded-2xl p-8 shadow-2xl">
+            <!-- URL Input -->
+            <div class="flex gap-4 mb-6">
+                <input 
+                    type="url" 
+                    id="urlInput" 
+                    placeholder="Enter website URL (e.g., https://example.com)"
+                    class="flex-1 bg-slate-700 border border-slate-600 rounded-lg px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:border-purple-500"
+                >
+                <button 
+                    onclick="scrapeUrl()"
+                    id="scrapeBtn"
+                    class="gradient px-8 py-3 rounded-lg font-semibold hover:opacity-90 transition"
+                >
+                    Scrape
+                </button>
+            </div>
+
+            <!-- Options -->
+            <div class="flex gap-6 mb-6">
+                <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="radio" name="mode" value="scrape" checked class="accent-purple-500">
+                    <span>Text</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="radio" name="mode" value="structured" class="accent-purple-500">
+                    <span>Structured JSON</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="radio" name="mode" value="crawl" class="accent-purple-500">
+                    <span>Crawl Site</span>
+                </label>
+            </div>
+
+            <!-- Crawl Options -->
+            <div id="crawlOptions" class="hidden mb-6">
+                <label class="text-gray-400 text-sm">Max pages to crawl:</label>
+                <input 
+                    type="number" 
+                    id="maxPages" 
+                    value="10" 
+                    min="1" 
+                    max="50"
+                    class="bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 w-24 ml-2"
+                >
+            </div>
+
+            <!-- Loading -->
+            <div id="loading" class="hidden text-center py-8">
+                <div class="inline-block animate-spin rounded-full h-12 w-12 border-4 border-purple-500 border-t-transparent"></div>
+                <p class="mt-4 text-gray-400 pulse">Scraping in progress...</p>
+            </div>
+
+            <!-- Results -->
+            <div id="results" class="hidden">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-xl font-semibold">Results</h2>
+                    <button 
+                        onclick="copyResults()"
+                        class="text-sm bg-slate-700 px-4 py-2 rounded-lg hover:bg-slate-600 transition"
+                    >
+                        Copy
+                    </button>
+                </div>
+                <pre id="output" class="bg-slate-900 rounded-lg p-4 overflow-auto max-h-96 text-sm text-green-400"></pre>
+            </div>
+
+            <!-- Error -->
+            <div id="error" class="hidden bg-red-900/50 border border-red-500 rounded-lg p-4 mt-4">
+                <p id="errorMsg" class="text-red-400"></p>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="text-center mt-8 text-gray-500 text-sm">
+            <p>Powered by IntelliScrape v2.1.0</p>
+            <p class="mt-2">
+                <a href="https://github.com/GuixJoy/IntelliScrape" class="text-purple-400 hover:underline">GitHub</a>
+                ·
+                <a href="https://pypi.org/project/intelliscrape/" class="text-purple-400 hover:underline">PyPI</a>
+            </p>
+        </div>
+    </div>
+
+    <script>
+        // API URL - change this to your backend URL
+        const API_URL = 'http://localhost:8000';
+
+        // Show/hide crawl options
+        document.querySelectorAll('input[name="mode"]').forEach(radio => {
+            radio.addEventListener('change', (e) => {
+                document.getElementById('crawlOptions').classList.toggle('hidden', e.target.value !== 'crawl');
+            });
+        });
+
+        async function scrapeUrl() {
+            const url = document.getElementById('urlInput').value;
+            const mode = document.querySelector('input[name="mode"]:checked').value;
+            
+            if (!url) {
+                showError('Please enter a URL');
+                return;
+            }
+
+            // Show loading, hide results
+            document.getElementById('loading').classList.remove('hidden');
+            document.getElementById('results').classList.add('hidden');
+            document.getElementById('error').classList.add('hidden');
+            document.getElementById('scrapeBtn').disabled = true;
+
+            try {
+                let endpoint, body;
+                
+                if (mode === 'scrape') {
+                    endpoint = '/scrape';
+                    body = { url };
+                } else if (mode === 'structured') {
+                    endpoint = '/structured';
+                    body = { url };
+                } else {
+                    endpoint = '/crawl';
+                    body = { url, max_pages: parseInt(document.getElementById('maxPages').value) };
+                }
+
+                const response = await fetch(`${API_URL}${endpoint}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.detail || 'Scraping failed');
+                }
+
+                // Show results
+                document.getElementById('output').textContent = JSON.stringify(data, null, 2);
+                document.getElementById('results').classList.remove('hidden');
+                
+            } catch (err) {
+                showError(err.message);
+            } finally {
+                document.getElementById('loading').classList.add('hidden');
+                document.getElementById('scrapeBtn').disabled = false;
+            }
+        }
+
+        function showError(msg) {
+            document.getElementById('errorMsg').textContent = msg;
+            document.getElementById('error').classList.remove('hidden');
+        }
+
+        function copyResults() {
+            const text = document.getElementById('output').textContent;
+            navigator.clipboard.writeText(text);
+            alert('Copied to clipboard!');
+        }
+
+        // Allow Enter key to scrape
+        document.getElementById('urlInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') scrapeUrl();
+        });
+    </script>
+</body>
+</html>
