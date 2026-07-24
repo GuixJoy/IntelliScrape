@@ -79,6 +79,12 @@ Examples:
         help="Output raw HTML",
     )
 
+    parser.add_argument(
+        "--force-browser",
+        action="store_true",
+        help="Force browser engine for JS-heavy sites",
+    )
+
     args = parser.parse_args(argv)
 
     if not args.url:
@@ -110,10 +116,10 @@ def _scrape(args) -> int:
         task = progress.add_task(f"Scraping {args.url}...", total=None)
 
         if args.json:
-            result = scraper.get_structured(args.url)
+            result = scraper.get_structured(args.url, force_browser=args.force_browser)
             content = json.dumps(result.to_dict(), indent=2, ensure_ascii=False)
         else:
-            content = scraper.scrape(args.url, return_raw=args.raw)
+            content = scraper.scrape(args.url, return_raw=args.raw, force_browser=args.force_browser)
 
         progress.update(task, completed=True)
 

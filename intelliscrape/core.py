@@ -208,6 +208,7 @@ class IntelliScrape:
         return_raw: bool = False,
         return_structured: bool = False,
         handle_consent: bool = True,
+        force_browser: bool = False,
         **kwargs,
     ) -> Union[str, StructuredData]:
         """Scrape a URL and return text content.
@@ -229,6 +230,8 @@ class IntelliScrape:
             Return StructuredData object with all metadata.
         handle_consent : bool
             Attempt to handle cookie consent banners.
+        force_browser : bool
+            Force using browser engine for JS-heavy sites.
 
         Returns
         -------
@@ -241,6 +244,11 @@ class IntelliScrape:
         parsed = urlsplit(url)
         if parsed.scheme.lower() not in _ALLOWED_SCHEMES:
             raise IntelliScrapeError("Only http/https URLs are supported")
+
+        # Force browser engine for known JS-heavy sites
+        if force_browser and not engine:
+            if force_dynamic(url):
+                engine = "playwright_stealth"
 
         # Get result
         result = self._fetch(url, engine=engine, **kwargs)
@@ -334,26 +342,44 @@ class IntelliScrape:
         engine: Optional[str] = None,
         **kwargs,
     ) -> ScrapeResult:
-        """Fetch URL using the appropriate engine with retry."""
+        """Fetch URL using the appropriate engine with fallback chain."""
+        
+        # If specific engine requested, use only that
         if engine and engine in self.engines:
-            return self._fetch_with_engine(url, engine, **kwargs)
+            result = self._fetch_with_engine(url, engine, **kwargs)
+            if result.success:
+                return result
+            raise IntelliScrapeError(f"Engine {engine} failed: {result.error}")
 
-        # Auto-detect: try engines in order of preference
+        # Auto-detect: try engines in order with fallback
         engine_order = ["static", "playwright_stealth", "camoufox", "nodriver"]
+        last_result = None
 
         for engine_name in engine_order:
+            self.logger.info(f"Trying engine: {engine_name}")
+            
             result = self._fetch_with_engine(url, engine_name, **kwargs)
+            last_result = result
+            
             if result.success:
                 # Check if we got meaningful content
                 if not html_needs_browser(result.html):
+                    self.logger.info(f"Success with engine: {engine_name}")
                     return result
+                
                 # Content needs browser, try next engine
-                if engine_name == "static":
-                    continue
-                return result
+                self.logger.info(f"Engine {engine_name} returned JS-only content, trying next...")
+                continue
+            
+            self.logger.info(f"Engine {engine_name} failed: {result.error}")
+            continue
 
-        # All engines failed, return last result
-        return result
+        # All engines failed or returned JS-only content
+        if last_result and last_result.success:
+            # We got some content, return it
+            return last_result
+        
+        raise IntelliScrapeError(f"All engines failed for {url}")
 
     def _fetch_with_engine(self, url: str, engine_name: str, **kwargs) -> ScrapeResult:
         """Fetch using a specific engine with retry."""
@@ -376,8 +402,10 @@ class IntelliScrape:
             return engine.fetch(url, **kwargs)
 
         try:
-            return self.throttle.execute(fetch)
+            result = self.throttle.execute(fetch)
+            return result
         except Exception as exc:
+            self.logger.debug(f"Engine {engine_name} exception: {exc}")
             return ScrapeResult(
                 url=url, html="", status_code=0,
                 engine=engine_name, success=False,
