@@ -96,8 +96,9 @@ from .downloader import Downloader, DownloadResult
 from .retry import SmartRetry, RetryConfig, RetryAttempt
 from .cookies import CookieManager, CookieData
 from .interceptor import RequestInterceptor, ResponseModifier, InterceptedRequest, InterceptedResponse
+from .ip_manager import IPManager, NaturalRotator, Proxy, ProxyType, IPInfo
 
-__version__ = "2.2.0"
+__version__ = "2.3.0"
 
 __all__ = [
     # Main API
@@ -163,6 +164,12 @@ __all__ = [
     "ResponseModifier",
     "InterceptedRequest",
     "InterceptedResponse",
+    # IP Management
+    "IPManager",
+    "NaturalRotator",
+    "Proxy",
+    "ProxyType",
+    "IPInfo",
     # Re-exports
     "ScrapeResult",
 ]
