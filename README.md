@@ -5,9 +5,9 @@
 [![Downloads](https://img.shields.io/pypi/dm/intelliscrape.svg)](https://pypi.org/project/intelliscrape/)
 [![License](https://img.shields.io/pypi/l/intelliscrape.svg)](https://github.com/GuixJoy/IntelliScrape/blob/main/LICENSE)
 
-**The Python scraper that actually works.**
+**Scrape anything. Nothing scrapes back.**
 
-Stop fighting with anti-bot systems. IntelliScrape handles the hard stuff so you can focus on your data.
+A Python toolkit that bypasses Cloudflare, DataDome, Akamai, and PerimeterX — shipped as a CLI, a Python API, and a hosted service. Exports straight to CSV, JSON, Excel, or SQLite.
 
 <div align="center">
   <img src="demo.gif" alt="IntelliScrape Demo" width="800">
@@ -17,7 +17,7 @@ Stop fighting with anti-bot systems. IntelliScrape handles the hard stuff so you
 
 ## What is this?
 
-IntelliScrape is a Python web scraping library that **scrapes 98% of websites** out of the box. It automatically picks the best engine, bypasses basic anti-bot detection, and gives you clean text — all with a single function call.
+IntelliScrape is a Python web scraping library that **scrapes 98% of websites** out of the box. It uses a 4-tier engine system that automatically escalates from fast HTTP requests to full browser automation — so you get the cheapest, fastest method that works, and heavier weapons only when needed.
 
 No more switching between `requests`, `playwright`, and `selenium`. No more debugging why your scraper got blocked. Just `scrape(url)` and you're done.
 
@@ -220,18 +220,24 @@ scrape(url)
 
 ---
 
-## Engine Selection
+## Engine Selection — 4-Tier Escalation
 
-| Engine | When to Use | Dependencies |
-|---|---|---|
-| `static` | Default, fast, most sites | `curl_cffi` |
-| `playwright_stealth` | JS-heavy, basic bot detection | `playwright` |
-| `nodriver` | Protected sites, advanced bypass | `nodriver` |
+IntelliScrape runs a tiered engine. It attempts the cheapest, fastest method first and escalates only when a target pushes back — so 70% of requests never leave tier 1, and hardcases still land.
+
+| Tier | Engine | When to Use | Dependencies |
+|---|---|---|---|
+| **Tier 1** | `curl_cffi` | Default. TLS impersonation, static requests. Sub-second. | `curl_cffi` |
+| **Tier 2** | `playwright-stealth` | JS-heavy pages, basic bot detection. Headless browser with patched fingerprints. | `playwright` |
+| **Tier 3** | `nodriver` | Protected sites, DataDome/PerimeterX. Raw CDP with no webdriver traces. | `nodriver` |
+| **Tier 4** | `camoufox` | Maximum stealth. Full fingerprint rewrite — canvas, WebGL, audio, fonts. | `camoufox` |
 
 ```python
 # Force a specific engine
 scraper = IntelliScrape()
 text = scraper.scrape("https://site.com", engine="playwright_stealth")
+
+# Auto-detect best engine (default)
+text = scraper.scrape("https://amazon.com")
 ```
 
 ---
