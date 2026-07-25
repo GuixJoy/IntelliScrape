@@ -21,7 +21,7 @@ dependencies = [
     "beautifulsoup4",
     "lxml",
     "curl_cffi>=0.7.0",
-    "fastapi>=0.100.0",
+    "fastapi[standard]>=0.100.0",
     "uvicorn>=0.23.0",
 ]
 
