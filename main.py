@@ -5,6 +5,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, HttpUrl
 from typing import Optional
 import json
+import logging
+import traceback
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 from intelliscrape import IntelliScrape, scrape
 from intelliscrape.crawler import crawl
@@ -70,46 +75,70 @@ def root():
     }
 
 
+@app.get("/health")
+def health():
+    return {"status": "ok", "version": "2.1.0"}
+
+
 @app.post("/scrape")
 def scrape_url(req: ScrapeRequest):
     """Scrape a website and return clean text."""
+    url_str = str(req.url)
+    logger.info(f"Scrape request: {url_str}")
     try:
-        content = scrape(str(req.url), return_raw=req.raw)
-        return ScrapeResponse(url=str(req.url), content=content)
+        content = scrape(url_str, return_raw=req.raw)
+        if not content:
+            raise ValueError("Empty response from target website")
+        logger.info(f"Scrape success: {url_str} ({len(content)} chars)")
+        return ScrapeResponse(url=url_str, content=content)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        error_msg = str(e)
+        logger.error(f"Scrape failed: {url_str} -> {error_msg}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to scrape {url_str}: {error_msg}"
+        )
 
 
 @app.post("/structured")
 def get_structured(req: ScrapeRequest):
     """Get structured data (title, meta, headings, etc)."""
+    url_str = str(req.url)
+    logger.info(f"Structured request: {url_str}")
     try:
         scraper = IntelliScrape()
-        data = scraper.get_structured(str(req.url))
+        data = scraper.get_structured(url_str)
         return StructuredResponse(
-            url=str(req.url),
+            url=url_str,
             title=data.title,
             description=data.description,
             meta_tags=data.meta_tags,
             headings=data.headings,
         )
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        error_msg = str(e)
+        logger.error(f"Structured failed: {url_str} -> {error_msg}")
+        raise HTTPException(status_code=400, detail=f"Failed to scrape {url_str}: {error_msg}")
 
 
 @app.post("/crawl")
 def crawl_site(req: CrawlRequest):
     """Crawl a website and return all pages."""
+    url_str = str(req.url)
+    logger.info(f"Crawl request: {url_str}")
     try:
         max_pages = min(req.max_pages, 20)
-        result = crawl(str(req.url), max_pages=max_pages)
+        result = crawl(url_str, max_pages=max_pages)
         return CrawlResponse(
             base_url=result.base_url,
             total_pages=result.total_pages,
             pages=[{"url": p.url, "content": p.content} for p in result.pages],
         )
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        error_msg = str(e)
+        logger.error(f"Crawl failed: {url_str} -> {error_msg}")
+        raise HTTPException(status_code=400, detail=f"Failed to crawl {url_str}: {error_msg}")
 
 
 if __name__ == "__main__":
