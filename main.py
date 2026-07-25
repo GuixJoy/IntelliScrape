@@ -3,16 +3,13 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, HttpUrl
-from typing import Optional
-import json
 import logging
 import traceback
+import requests
+from bs4 import BeautifulSoup
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-from intelliscrape import IntelliScrape, scrape
-from intelliscrape.crawler import crawl
 
 app = FastAPI(
     title="IntelliScrape API",
@@ -20,7 +17,6 @@ app = FastAPI(
     version="2.1.0",
 )
 
-# Allow CORS for frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -35,31 +31,74 @@ class ScrapeRequest(BaseModel):
     raw: bool = False
 
 
-class CrawlRequest(BaseModel):
-    url: HttpUrl
-    max_pages: int = 10
-
-
 class ScrapeResponse(BaseModel):
     url: str
     content: str
     success: bool = True
 
 
-class StructuredResponse(BaseModel):
-    url: str
-    title: str
-    description: str
-    meta_tags: dict
-    headings: dict
-    success: bool = True
+def scrape_basic(url: str, raw: bool = False) -> str:
+    """Basic scrape using requests + BeautifulSoup with fallback."""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+    }
 
+    try:
+        resp = requests.get(url, headers=headers, timeout=30, allow_redirects=True)
+        resp.raise_for_status()
+    except requests.exceptions.Timeout:
+        raise Exception("Request timed out after 30 seconds")
+    except requests.exceptions.ConnectionError:
+        raise Exception(f"Could not connect to {url}")
+    except requests.exceptions.HTTPError as e:
+        raise Exception(f"HTTP error: {e.response.status_code}")
+    except Exception as e:
+        raise Exception(f"Request failed: {str(e)}")
 
-class CrawlResponse(BaseModel):
-    base_url: str
-    total_pages: int
-    pages: list[dict]
-    success: bool = True
+    content_type = resp.headers.get("content-type", "")
+
+    if raw:
+        return resp.text
+
+    if "json" in content_type:
+        return resp.text
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+
+    # Remove script and style elements
+    for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
+        tag.decompose()
+
+    # Get title
+    title = soup.title.string if soup.title else ""
+
+    # Get meta description
+    meta_desc = ""
+    meta = soup.find("meta", attrs={"name": "description"})
+    if meta:
+        meta_desc = meta.get("content", "")
+
+    # Get main content
+    main = soup.find("main") or soup.find("article") or soup.find("body")
+    if main:
+        text = main.get_text(separator="\n", strip=True)
+    else:
+        text = soup.get_text(separator="\n", strip=True)
+
+    # Build output
+    parts = []
+    if title:
+        parts.append(f"Title: {title}")
+    if meta_desc:
+        parts.append(f"Description: {meta_desc}")
+    parts.append("")
+    parts.append(text)
+
+    return "\n".join(parts)
 
 
 @app.get("/")
@@ -69,8 +108,6 @@ def root():
         "version": "2.1.0",
         "endpoints": {
             "scrape": "POST /scrape",
-            "structured": "POST /structured",
-            "crawl": "POST /crawl",
         }
     }
 
@@ -86,59 +123,15 @@ def scrape_url(req: ScrapeRequest):
     url_str = str(req.url)
     logger.info(f"Scrape request: {url_str}")
     try:
-        content = scrape(url_str, return_raw=req.raw)
-        if not content:
-            raise ValueError("Empty response from target website")
+        content = scrape_basic(url_str, raw=req.raw)
+        if not content or len(content.strip()) == 0:
+            raise Exception("Empty response from target website")
         logger.info(f"Scrape success: {url_str} ({len(content)} chars)")
         return ScrapeResponse(url=url_str, content=content)
     except Exception as e:
         error_msg = str(e)
         logger.error(f"Scrape failed: {url_str} -> {error_msg}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(
-            status_code=400,
-            detail=f"Failed to scrape {url_str}: {error_msg}"
-        )
-
-
-@app.post("/structured")
-def get_structured(req: ScrapeRequest):
-    """Get structured data (title, meta, headings, etc)."""
-    url_str = str(req.url)
-    logger.info(f"Structured request: {url_str}")
-    try:
-        scraper = IntelliScrape()
-        data = scraper.get_structured(url_str)
-        return StructuredResponse(
-            url=url_str,
-            title=data.title,
-            description=data.description,
-            meta_tags=data.meta_tags,
-            headings=data.headings,
-        )
-    except Exception as e:
-        error_msg = str(e)
-        logger.error(f"Structured failed: {url_str} -> {error_msg}")
-        raise HTTPException(status_code=400, detail=f"Failed to scrape {url_str}: {error_msg}")
-
-
-@app.post("/crawl")
-def crawl_site(req: CrawlRequest):
-    """Crawl a website and return all pages."""
-    url_str = str(req.url)
-    logger.info(f"Crawl request: {url_str}")
-    try:
-        max_pages = min(req.max_pages, 20)
-        result = crawl(url_str, max_pages=max_pages)
-        return CrawlResponse(
-            base_url=result.base_url,
-            total_pages=result.total_pages,
-            pages=[{"url": p.url, "content": p.content} for p in result.pages],
-        )
-    except Exception as e:
-        error_msg = str(e)
-        logger.error(f"Crawl failed: {url_str} -> {error_msg}")
-        raise HTTPException(status_code=400, detail=f"Failed to crawl {url_str}: {error_msg}")
+        raise HTTPException(status_code=400, detail=error_msg)
 
 
 if __name__ == "__main__":
