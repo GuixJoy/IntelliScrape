@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="IntelliScrape API",
     description="Scrape any website with anti-detection capabilities",
-    version="2.1.0",
+    version="2.1.1",
 )
 
 app.add_middleware(
@@ -43,7 +43,7 @@ def scrape_basic(url: str, raw: bool = False) -> str:
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.5",
-        "Accept-Encoding": "gzip, deflate, br",
+        "Accept-Encoding": "gzip, deflate",
         "Connection": "keep-alive",
     }
 
@@ -62,6 +62,7 @@ def scrape_basic(url: str, raw: bool = False) -> str:
     content_type = resp.headers.get("content-type", "")
 
     if raw:
+        # Ensure we return decoded text, not raw bytes
         return resp.text
 
     if "json" in content_type:
@@ -105,7 +106,7 @@ def scrape_basic(url: str, raw: bool = False) -> str:
 def root():
     return {
         "name": "IntelliScrape API",
-        "version": "2.1.0",
+        "version": "2.1.1",
         "endpoints": {
             "scrape": "POST /scrape",
         }
