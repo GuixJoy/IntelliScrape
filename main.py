@@ -440,7 +440,7 @@ def store_scrape(url: str, content: str, fingerprint: Optional[dict], ip_address
                     %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                     %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                     %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                    %s,%s,%s,%s,%s
+                    %s,%s,%s,%s
                 )""",
                 (
                     url,
@@ -614,7 +614,7 @@ def debug_insert():
                     %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                     %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                     %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                    %s,%s,%s,%s,%s
+                    %s,%s,%s,%s
                 )""",
                 (
                     "https://debug-test.example.com",
@@ -634,9 +634,11 @@ def debug_insert():
                     "Google Inc.", None,
                     None, None, None, None,
                     "127.0.0.1", "127.0.0.1", None,
+                    None, None, None,
                     None, None, None, None,
                     None, None, None, None,
                     None, None, None, None,
+                    None, None,
                     "residential", None,
                 ),
             )
