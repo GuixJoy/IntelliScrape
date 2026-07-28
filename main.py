@@ -7,9 +7,15 @@ from typing import Optional
 import logging
 import json
 import os
-import psycopg
 import requests
 from bs4 import BeautifulSoup
+
+try:
+    import psycopg
+    DB_AVAILABLE = True
+except ImportError:
+    psycopg = None
+    DB_AVAILABLE = False
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -20,8 +26,11 @@ def get_db():
     return psycopg.connect(DATABASE_URL, autocommit=True)
 
 def init_db():
-    if not DATABASE_URL:
-        logger.warning("DATABASE_URL not set — scrape logging disabled")
+    if not DATABASE_URL or not DB_AVAILABLE:
+        if not DB_AVAILABLE:
+            logger.warning("psycopg not available — scrape logging disabled")
+        else:
+            logger.warning("DATABASE_URL not set — scrape logging disabled")
         return
     try:
         conn = get_db()
@@ -149,7 +158,7 @@ def scrape_basic(url: str, raw: bool = False) -> str:
 
 def store_scrape(url: str, content: str, fingerprint: Optional[dict], ip_address: str, user_agent: str):
     """Store scrape record in Neon DB."""
-    if not DATABASE_URL:
+    if not DATABASE_URL or not DB_AVAILABLE:
         return
     try:
         conn = get_db()
@@ -213,7 +222,7 @@ def scrape_url(req: ScrapeRequest, request: Request):
 @app.get("/scrapes")
 def get_scrapes(limit: int = 100):
     """Get recent scrape logs."""
-    if not DATABASE_URL:
+    if not DATABASE_URL or not DB_AVAILABLE:
         raise HTTPException(status_code=503, detail="Database not configured")
     try:
         conn = get_db()
@@ -245,7 +254,7 @@ def get_scrapes(limit: int = 100):
 @app.get("/stats")
 def get_stats():
     """Get scrape statistics."""
-    if not DATABASE_URL:
+    if not DATABASE_URL or not DB_AVAILABLE:
         raise HTTPException(status_code=503, detail="Database not configured")
     try:
         conn = get_db()
