@@ -41,15 +41,120 @@ def init_db():
     try:
         conn = get_db()
         with conn.cursor() as cur:
+            # Check if old schema exists (has 'fingerprint' column)
+            cur.execute("""
+                SELECT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'scrapes' AND column_name = 'fingerprint'
+                )
+            """)
+            has_old_col = cur.fetchone()[0]
+
+            if has_old_col:
+                # Drop old table and recreate with new schema
+                cur.execute("DROP TABLE IF EXISTS scrapes CASCADE")
+                logger.info("Dropped old scrapes table for schema migration")
+
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS scrapes (
                     id SERIAL PRIMARY KEY,
                     url TEXT NOT NULL,
                     content_preview TEXT,
-                    fingerprint JSONB,
-                    ip_address TEXT,
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+
+                    -- top-level
+                    fp_hash TEXT,
+                    confidence_score DOUBLE PRECISION,
+
+                    -- incognito
+                    incognito BOOLEAN,
+                    incognito_browser TEXT,
+
+                    -- bot detection
+                    is_bot BOOLEAN,
+                    bot_signals JSONB,
+                    bot_confidence DOUBLE PRECISION,
+
+                    -- browser
+                    browser_name TEXT,
+                    browser_version TEXT,
                     user_agent TEXT,
-                    created_at TIMESTAMPTZ DEFAULT NOW()
+                    platform TEXT,
+
+                    -- display
+                    screen_width INT,
+                    screen_height INT,
+                    color_depth INT,
+                    color_gamut TEXT,
+
+                    -- hardware
+                    hardware_concurrency INT,
+                    device_memory INT,
+
+                    -- os
+                    os_name TEXT,
+                    os_version TEXT,
+
+                    -- storage
+                    local_storage BOOLEAN,
+                    session_storage BOOLEAN,
+                    indexed_db BOOLEAN,
+
+                    -- media
+                    audio DOUBLE PRECISION,
+                    webgl_vendor TEXT,
+                    webgl_renderer TEXT,
+                    webgl_image_hash TEXT,
+                    canvas_winding BOOLEAN,
+                    canvas_geometry TEXT,
+                    canvas_text TEXT,
+
+                    -- plugins & languages
+                    plugins JSONB,
+                    languages JSONB,
+                    cookies_enabled BOOLEAN,
+                    do_not_track TEXT,
+
+                    -- timezone & touch
+                    timezone TEXT,
+                    touch_max_points INT,
+                    touch_event BOOLEAN,
+                    touch_start BOOLEAN,
+
+                    -- vendor
+                    vendor TEXT,
+                    vendor_flavors JSONB,
+
+                    -- math & fonts
+                    math_constants JSONB,
+                    detected_fonts JSONB,
+
+                    -- device type
+                    device_type JSONB,
+
+                    -- enhanced fingerprint
+                    enhanced JSONB,
+
+                    -- geolocation
+                    ip_address TEXT,
+                    ipv4 TEXT,
+                    ipv6 TEXT,
+                    city TEXT,
+                    region_code TEXT,
+                    region_name TEXT,
+                    country_iso TEXT,
+                    country_name TEXT,
+                    continent_code TEXT,
+                    continent_name TEXT,
+                    latitude DOUBLE PRECISION,
+                    longitude DOUBLE PRECISION,
+                    geo_accuracy INT,
+                    geo_timezone TEXT,
+                    is_anonymous BOOLEAN,
+                    is_anonymous_proxy BOOLEAN,
+                    is_anonymous_vpn BOOLEAN,
+                    network TEXT,
+                    vpn_status JSONB
                 )
             """)
         conn.close()
@@ -93,15 +198,96 @@ class ScrapeLog(BaseModel):
     id: int
     url: str
     content_preview: Optional[str]
-    fingerprint: Optional[dict]
-    ip_address: Optional[str]
-    user_agent: Optional[str]
     created_at: str
+    # fingerprint - top level
+    fp_hash: Optional[str] = None
+    confidence_score: Optional[float] = None
+    # incognito
+    incognito: Optional[bool] = None
+    incognito_browser: Optional[str] = None
+    # bot
+    is_bot: Optional[bool] = None
+    bot_signals: Optional[list] = None
+    bot_confidence: Optional[float] = None
+    # browser
+    browser_name: Optional[str] = None
+    browser_version: Optional[str] = None
+    user_agent: Optional[str] = None
+    platform: Optional[str] = None
+    # display
+    screen_width: Optional[int] = None
+    screen_height: Optional[int] = None
+    color_depth: Optional[int] = None
+    color_gamut: Optional[str] = None
+    # hardware
+    hardware_concurrency: Optional[int] = None
+    device_memory: Optional[int] = None
+    # os
+    os_name: Optional[str] = None
+    os_version: Optional[str] = None
+    # storage
+    local_storage: Optional[bool] = None
+    session_storage: Optional[bool] = None
+    indexed_db: Optional[bool] = None
+    # media
+    audio: Optional[float] = None
+    webgl_vendor: Optional[str] = None
+    webgl_renderer: Optional[str] = None
+    webgl_image_hash: Optional[str] = None
+    canvas_winding: Optional[bool] = None
+    canvas_geometry: Optional[str] = None
+    canvas_text: Optional[str] = None
+    # plugins & languages
+    plugins: Optional[list] = None
+    languages: Optional[list] = None
+    cookies_enabled: Optional[bool] = None
+    do_not_track: Optional[str] = None
+    # timezone & touch
+    timezone: Optional[str] = None
+    touch_max_points: Optional[int] = None
+    touch_event: Optional[bool] = None
+    touch_start: Optional[bool] = None
+    # vendor
+    vendor: Optional[str] = None
+    vendor_flavors: Optional[list] = None
+    # math & fonts
+    math_constants: Optional[dict] = None
+    detected_fonts: Optional[list] = None
+    # device type
+    device_type: Optional[dict] = None
+    # enhanced
+    enhanced: Optional[dict] = None
+    # geolocation
+    ip_address: Optional[str] = None
+    ipv4: Optional[str] = None
+    ipv6: Optional[str] = None
+    city: Optional[str] = None
+    region_code: Optional[str] = None
+    region_name: Optional[str] = None
+    country_iso: Optional[str] = None
+    country_name: Optional[str] = None
+    continent_code: Optional[str] = None
+    continent_name: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    geo_accuracy: Optional[int] = None
+    geo_timezone: Optional[str] = None
+    is_anonymous: Optional[bool] = None
+    is_anonymous_proxy: Optional[bool] = None
+    is_anonymous_vpn: Optional[bool] = None
+    network: Optional[str] = None
+    vpn_status: Optional[dict] = None
 
 
 class StatsResponse(BaseModel):
     total_scrapes: int
     unique_urls: int
+    unique_hashes: int
+    unique_countries: int
+    bot_detected: int
+    top_browsers: dict
+    top_os: dict
+    top_countries: dict
 
 
 def scrape_basic(url: str, raw: bool = False, render_js: bool = False) -> str:
@@ -211,21 +397,137 @@ def scrape_with_playwright(url: str, raw: bool = False) -> str:
 
 
 def store_scrape(url: str, content: str, fingerprint: Optional[dict], ip_address: str, user_agent: str):
-    """Store scrape record in Neon DB."""
+    """Store scrape record in Neon DB with all fingerprint attributes."""
     if not DATABASE_URL or not DB_AVAILABLE:
         return
+    fp = fingerprint or {}
     try:
         conn = get_db()
         with conn.cursor() as cur:
             cur.execute(
-                """INSERT INTO scrapes (url, content_preview, fingerprint, ip_address, user_agent)
-                   VALUES (%s, %s, %s, %s, %s)""",
+                """INSERT INTO scrapes (
+                    url, content_preview,
+                    fp_hash, confidence_score,
+                    incognito, incognito_browser,
+                    is_bot, bot_signals, bot_confidence,
+                    browser_name, browser_version, user_agent, platform,
+                    screen_width, screen_height, color_depth, color_gamut,
+                    hardware_concurrency, device_memory,
+                    os_name, os_version,
+                    local_storage, session_storage, indexed_db,
+                    audio, webgl_vendor, webgl_renderer, webgl_image_hash,
+                    canvas_winding, canvas_geometry, canvas_text,
+                    plugins, languages, cookies_enabled, do_not_track,
+                    timezone, touch_max_points, touch_event, touch_start,
+                    vendor, vendor_flavors,
+                    math_constants, detected_fonts, device_type, enhanced,
+                    ip_address, ipv4, ipv6,
+                    city, region_code, region_name,
+                    country_iso, country_name, continent_code, continent_name,
+                    latitude, longitude, geo_accuracy, geo_timezone,
+                    is_anonymous, is_anonymous_proxy, is_anonymous_vpn,
+                    network, vpn_status
+                ) VALUES (
+                    %s, %s,
+                    %s, %s,
+                    %s, %s,
+                    %s, %s, %s,
+                    %s, %s, %s, %s,
+                    %s, %s, %s, %s,
+                    %s, %s,
+                    %s, %s,
+                    %s, %s, %s,
+                    %s, %s, %s, %s,
+                    %s, %s, %s,
+                    %s, %s, %s, %s,
+                    %s, %s, %s, %s,
+                    %s, %s,
+                    %s, %s, %s, %s,
+                    %s, %s, %s,
+                    %s, %s, %s, %s,
+                    %s, %s, %s, %s,
+                    %s, %s, %s,
+                    %s, %s
+                )""",
                 (
                     url,
                     content[:500] if content else None,
-                    json.dumps(fingerprint) if fingerprint else None,
-                    ip_address,
+                    # top-level
+                    fp.get("hash"),
+                    fp.get("confidenceScore"),
+                    # incognito
+                    fp.get("incognito"),
+                    fp.get("incognitoBrowser"),
+                    # bot
+                    fp.get("isBot"),
+                    json.dumps(fp.get("botSignals")) if fp.get("botSignals") else None,
+                    fp.get("botConfidence"),
+                    # browser
+                    fp.get("browserName"),
+                    fp.get("browserVersion"),
                     user_agent,
+                    fp.get("platform"),
+                    # display
+                    fp.get("screenW"),
+                    fp.get("screenH"),
+                    fp.get("colorDepth"),
+                    fp.get("colorGamut"),
+                    # hardware
+                    fp.get("hardwareConcurrency"),
+                    fp.get("deviceMemory"),
+                    # os
+                    fp.get("osName"),
+                    fp.get("osVersion"),
+                    # storage
+                    fp.get("localStorage"),
+                    fp.get("sessionStorage"),
+                    fp.get("indexedDB"),
+                    # media
+                    fp.get("audio"),
+                    fp.get("webGLVendor"),
+                    fp.get("webGLRenderer"),
+                    fp.get("webGLImageHash"),
+                    fp.get("canvasWinding"),
+                    fp.get("canvasGeometry"),
+                    fp.get("canvasText"),
+                    # plugins & languages
+                    json.dumps(fp.get("plugins")) if fp.get("plugins") else None,
+                    json.dumps(fp.get("languages")) if fp.get("languages") else None,
+                    fp.get("cookiesEnabled"),
+                    fp.get("doNotTrack"),
+                    # timezone & touch
+                    fp.get("timezone"),
+                    fp.get("touchMaxPoints"),
+                    fp.get("touchEvent"),
+                    fp.get("touchStart"),
+                    # vendor
+                    fp.get("vendor"),
+                    json.dumps(fp.get("vendorFlavors")) if fp.get("vendorFlavors") else None,
+                    # math & fonts
+                    json.dumps(fp.get("mathConstants")) if fp.get("mathConstants") else None,
+                    json.dumps(fp.get("detectedFonts")) if fp.get("detectedFonts") else None,
+                    json.dumps(fp.get("deviceType")) if fp.get("deviceType") else None,
+                    json.dumps(fp.get("enhanced")) if fp.get("enhanced") else None,
+                    # geolocation
+                    ip_address,
+                    fp.get("ipv4"),
+                    fp.get("ipv6"),
+                    fp.get("city"),
+                    fp.get("regionCode"),
+                    fp.get("regionName"),
+                    fp.get("countryIso"),
+                    fp.get("countryName"),
+                    fp.get("continentCode"),
+                    fp.get("continentName"),
+                    fp.get("latitude"),
+                    fp.get("longitude"),
+                    fp.get("geoAccuracy"),
+                    fp.get("geoTimeZone"),
+                    fp.get("isAnonymous"),
+                    fp.get("isAnonymousProxy"),
+                    fp.get("isAnonymousVpn"),
+                    fp.get("network"),
+                    json.dumps(fp.get("vpnStatus")) if fp.get("vpnStatus") else None,
                 ),
             )
         conn.close()
@@ -275,30 +577,29 @@ def scrape_url(req: ScrapeRequest, request: Request):
 
 @app.get("/scrapes")
 def get_scrapes(limit: int = 100):
-    """Get recent scrape logs."""
+    """Get recent scrape logs with all fingerprint attributes."""
     if not DATABASE_URL or not DB_AVAILABLE:
         raise HTTPException(status_code=503, detail="Database not configured")
     try:
         conn = get_db()
         with conn.cursor() as cur:
             cur.execute(
-                """SELECT id, url, content_preview, fingerprint, ip_address, user_agent, created_at
-                   FROM scrapes ORDER BY created_at DESC LIMIT %s""",
+                """SELECT * FROM scrapes ORDER BY created_at DESC LIMIT %s""",
                 (min(limit, 500),),
             )
+            cols = [desc[0] for desc in cur.description]
             rows = cur.fetchall()
         conn.close()
         result = []
-        for r in rows:
-            result.append(ScrapeLog(
-                id=r[0],
-                url=r[1],
-                content_preview=r[2],
-                fingerprint=json.loads(r[3]) if r[3] else None,
-                ip_address=r[4],
-                user_agent=r[5],
-                created_at=r[6].isoformat() if r[6] else "",
-            ).model_dump())
+        for row in rows:
+            d = dict(zip(cols, row))
+            # Serialize non-JSON-friendly types
+            for k, v in d.items():
+                if hasattr(v, "isoformat"):
+                    d[k] = v.isoformat()
+                elif isinstance(v, (dict, list)):
+                    d[k] = v  # psycopg returns dicts/lists for JSONB
+            result.append(d)
         return result
     except Exception as e:
         logger.error(f"Failed to fetch scrapes: {e}")
@@ -307,7 +608,7 @@ def get_scrapes(limit: int = 100):
 
 @app.get("/stats")
 def get_stats():
-    """Get scrape statistics."""
+    """Get scrape statistics with fingerprint analytics."""
     if not DATABASE_URL or not DB_AVAILABLE:
         raise HTTPException(status_code=503, detail="Database not configured")
     try:
@@ -317,8 +618,32 @@ def get_stats():
             total = cur.fetchone()[0]
             cur.execute("SELECT COUNT(DISTINCT url) FROM scrapes")
             unique = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(DISTINCT fp_hash) FROM scrapes WHERE fp_hash IS NOT NULL")
+            unique_hashes = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(DISTINCT country_iso) FROM scrapes WHERE country_iso IS NOT NULL")
+            unique_countries = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM scrapes WHERE is_bot = true")
+            bot_detected = cur.fetchone()[0]
+            # Top browsers
+            cur.execute("SELECT browser_name, COUNT(*) as c FROM scrapes WHERE browser_name IS NOT NULL GROUP BY browser_name ORDER BY c DESC LIMIT 5")
+            top_browsers = {r[0]: r[1] for r in cur.fetchall()}
+            # Top OS
+            cur.execute("SELECT os_name, COUNT(*) as c FROM scrapes WHERE os_name IS NOT NULL GROUP BY os_name ORDER BY c DESC LIMIT 5")
+            top_os = {r[0]: r[1] for r in cur.fetchall()}
+            # Top countries
+            cur.execute("SELECT country_name, COUNT(*) as c FROM scrapes WHERE country_name IS NOT NULL GROUP BY country_name ORDER BY c DESC LIMIT 10")
+            top_countries = {r[0]: r[1] for r in cur.fetchall()}
         conn.close()
-        return StatsResponse(total_scrapes=total, unique_urls=unique).model_dump()
+        return StatsResponse(
+            total_scrapes=total,
+            unique_urls=unique,
+            unique_hashes=unique_hashes,
+            unique_countries=unique_countries,
+            bot_detected=bot_detected,
+            top_browsers=top_browsers,
+            top_os=top_os,
+            top_countries=top_countries,
+        ).model_dump()
     except Exception as e:
         logger.error(f"Failed to fetch stats: {e}")
         raise HTTPException(status_code=500, detail=str(e))
