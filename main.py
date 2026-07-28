@@ -27,6 +27,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
+if DATABASE_URL and "channel_binding=require" in DATABASE_URL:
+    DATABASE_URL = DATABASE_URL.replace("&channel_binding=require", "").replace("?channel_binding=require", "")
+    logger.info("Stripped channel_binding=require from DATABASE_URL (psycopg2 incompatible)")
 
 def get_db():
     return psycopg.connect(DATABASE_URL, autocommit=True)
@@ -39,7 +42,9 @@ def init_db():
             logger.warning("DATABASE_URL not set — scrape logging disabled")
         return
     try:
+        logger.info(f"Connecting to Neon DB (url prefix: {DATABASE_URL[:30]}...)")
         conn = get_db()
+        logger.info("Neon DB connection successful")
         with conn.cursor() as cur:
             # Check if old schema exists (has 'fingerprint' column)
             cur.execute("""
@@ -399,6 +404,7 @@ def scrape_with_playwright(url: str, raw: bool = False) -> str:
 def store_scrape(url: str, content: str, fingerprint: Optional[dict], ip_address: str, user_agent: str):
     """Store scrape record in Neon DB with all fingerprint attributes."""
     if not DATABASE_URL or not DB_AVAILABLE:
+        logger.warning(f"store_scrape skipped: DB_AVAILABLE={DB_AVAILABLE}, DATABASE_URL={'set' if DATABASE_URL else 'unset'}")
         return
     fp = fingerprint or {}
     try:
@@ -504,6 +510,7 @@ def store_scrape(url: str, content: str, fingerprint: Optional[dict], ip_address
                 ),
             )
         conn.close()
+        logger.info(f"Scrape stored: {url[:80]}")
     except Exception as e:
         logger.error(f"Failed to store scrape: {type(e).__name__}: {e}")
 
@@ -524,6 +531,48 @@ def root():
 @app.get("/health")
 def health():
     return {"status": "ok", "version": "2.3.0"}
+
+
+@app.get("/debug/db")
+def debug_db():
+    """Diagnose database connection state."""
+    info = {
+        "psycopg_imported": DB_AVAILABLE,
+        "database_url_set": bool(DATABASE_URL),
+        "database_url_prefix": (DATABASE_URL[:40] + "...") if DATABASE_URL else None,
+        "has_channel_binding": "channel_binding" in (DATABASE_URL or ""),
+    }
+    if not DATABASE_URL:
+        info["error"] = "DATABASE_URL env var not set"
+        return info
+    if not DB_AVAILABLE:
+        info["error"] = "psycopg import failed"
+        return info
+    try:
+        conn = psycopg.connect(DATABASE_URL, autocommit=True)
+        with conn.cursor() as cur:
+            cur.execute("SELECT version()")
+            pg_version = cur.fetchone()[0]
+            cur.execute("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'scrapes')")
+            table_exists = cur.fetchone()[0]
+            if table_exists:
+                cur.execute("SELECT COUNT(*) FROM scrapes")
+                row_count = cur.fetchone()[0]
+                cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'scrapes' ORDER BY ordinal_position")
+                columns = [r[0] for r in cur.fetchall()]
+            else:
+                row_count = None
+                columns = []
+        conn.close()
+        info["pg_version"] = pg_version
+        info["table_exists"] = table_exists
+        info["row_count"] = row_count
+        info["column_count"] = len(columns)
+        info["status"] = "connected"
+    except Exception as e:
+        info["status"] = "error"
+        info["error"] = f"{type(e).__name__}: {e}"
+    return info
 
 
 @app.post("/scrape")
