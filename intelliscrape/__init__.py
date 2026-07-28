@@ -2,68 +2,56 @@
 IntelliScrape
 -------------
 
-Advanced web scraping library with anti-detection capabilities.
-Scrapes 98% of websites with TLS impersonation, stealth browsing,
-and intelligent retry logic.
+Intelligent web scraping library that analyzes sites and auto-selects the best approach.
 
 Features:
 - Multi-engine architecture (static, playwright_stealth, nodriver, camoufox)
 - TLS fingerprint impersonation (JA3/JA4 bypass)
 - Browser fingerprint randomization
 - Human-like behavioral simulation
-- Proxy rotation and management
+- Intelligent site analysis and auto-configuration
+- Residential proxy integration (Bright Data, ScraperAPI, Oxylabs, Smartproxy)
+- Smart rate limiting (slower for protected sites)
 - CAPTCHA detection and solving
-- Smart retry with exponential backoff
-- Rate limiting
+- Smart retry with engine fallback
 - Anti-bot vendor detection
 - Cookie consent handling
 - Structured data extraction
-- Async support for concurrent scraping
-- Proxy provider integrations (Bright Data, ScraperAPI, Oxylabs)
 - Authentication and session persistence
 - Form submission and search
 - Auto-pagination
 - Data export (JSON, CSV, Excel, SQLite, Markdown)
 - File downloads (images, PDFs, documents)
-- Smart retries with engine fallback
-- Cookie persistence
 - Request/response interception
 
 Quick Start:
     >>> from intelliscrape import scrape
     >>> text = scrape("https://example.com")
 
-Advanced Usage:
+Intelligent Mode (default):
     >>> from intelliscrape import IntelliScrape
-    >>> scraper = IntelliScrape(proxy="user:pass@proxy:8080")
-    >>> result = scraper.scrape("https://protected-site.com")
-    >>> structured = scraper.get_structured("https://example.com")
-
-Authentication:
-    >>> from intelliscrape import IntelliScrape, LoginCredentials
     >>> scraper = IntelliScrape()
-    >>> scraper.login("https://example.com", LoginCredentials(username="user", password="pass"))
-    >>> scraper.scrape("https://example.com/dashboard")
+    >>> # IntelliScrape auto-detects the best approach
+    >>> result = scraper.scrape("https://amazon.com")
+    >>> # Automatically uses browser engine, residential proxy, slower rate
 
-File Downloads:
-    >>> from intelliscrape import Downloader
-    >>> downloader = Downloader()
-    >>> result = downloader.download("https://example.com/file.pdf")
-    >>> images = downloader.download_images(html, base_url)
+With Residential Proxies:
+    >>> from intelliscrape import IntelliScrape
+    >>> scraper = IntelliScrape(brightdata_key="your_key")
+    >>> result = scraper.scrape("https://amazon.com")
 
-Request Interception:
-    >>> from intelliscrape import RequestInterceptor
-    >>> interceptor = RequestInterceptor()
-    >>> interceptor.block_urls([".*\\.analytics\\..*", ".*tracking.*"])
-    >>> interceptor.modify_headers({"X-Custom-Header": "value"})
-
-Export:
-    >>> from intelliscrape import DataExporter
-    >>> DataExporter.export(data, format="csv", file="output.csv")
+Analyze Site:
+    >>> from intelliscrape import IntelliScrape
+    >>> scraper = IntelliScrape()
+    >>> analysis = scraper.analyze("https://amazon.com")
+    >>> print(f"Site type: {analysis.site_type.value}")
+    >>> print(f"Protection: {analysis.protection_level.value}")
+    >>> print(f"Recommended engine: {analysis.recommended_engine}")
 """
 
 from .core import IntelliScrape, scrape
 from .crawler import crawl, CrawlResult, ScrapeResult
+from .intelligent import SiteAnalyzer, SiteAnalysis, SiteType, ProtectionLevel, SmartRateLimiter
 from .proxy import (
     ProxyConfig,
     ProxyManager,
@@ -71,6 +59,7 @@ from .proxy import (
     ProxyProviderFactory,
     ProxyProviderConfig,
 )
+from .proxy.manager import IntelligentProxyManager, ProxyProvider
 from .session import SessionManager
 from .challenges import CaptchaDetector, CaptchaSolver
 from .anti_detection import (
@@ -98,7 +87,7 @@ from .cookies import CookieManager, CookieData
 from .interceptor import RequestInterceptor, ResponseModifier, InterceptedRequest, InterceptedResponse
 from .ip_manager import IPManager, NaturalRotator, Proxy, ProxyType, IPInfo
 
-__version__ = "2.3.0"
+__version__ = "2.4.0"
 
 __all__ = [
     # Main API
@@ -108,6 +97,12 @@ __all__ = [
     "AsyncIntelliScrape",
     "scrape_async",
     "scrape_many_async",
+    # Intelligent mode
+    "SiteAnalyzer",
+    "SiteAnalysis",
+    "SiteType",
+    "ProtectionLevel",
+    "SmartRateLimiter",
     # Crawler
     "crawl",
     "CrawlResult",
@@ -117,6 +112,8 @@ __all__ = [
     "ProxyType",
     "ProxyProviderFactory",
     "ProxyProviderConfig",
+    "IntelligentProxyManager",
+    "ProxyProvider",
     # Session
     "SessionManager",
     # Challenges

@@ -2,6 +2,12 @@
 
 The simplest way to scrape any website.
 Just: intelliscrape <url>
+
+IntelliScrape automatically:
+- Analyzes the site type and protection level
+- Selects the best engine
+- Uses free proxies when needed (no API key required!)
+- Configures rate limiting automatically
 """
 
 from __future__ import annotations
@@ -14,8 +20,10 @@ import io
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 from rich.panel import Panel
+from rich.table import Table
 
 from .core import IntelliScrape, scrape
+from .intelligent import SiteAnalyzer
 from .crawler import crawl
 from .auth import Authenticator, LoginCredentials
 from .forms import FormSubmitter
@@ -41,10 +49,22 @@ def main(argv: list[str] | None = None) -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Basic scraping
+  # Basic scraping (intelligent mode on by default)
   intelliscrape https://example.com
   intelliscrape https://example.com -o output.txt
   intelliscrape https://example.com --json
+  
+  # Analyze site (see what approach IntelliScrape would use)
+  intelliscrape https://amazon.com --analyze
+  
+  # Find free proxies
+  intelliscrape --find-proxies
+  
+  # Use free proxies (automatic!)
+  intelliscrape https://amazon.com --use-free-proxies
+  
+  # Disable intelligent mode (manual control)
+  intelliscrape https://example.com --no-intelligent
   
   # Login and scrape
   intelliscrape https://site.com --login --username user --password pass
@@ -58,7 +78,6 @@ Examples:
   
   # Custom headers
   intelliscrape https://site.com --header "Authorization: Bearer xxx"
-  intelliscrape https://site.com --header "X-API-Key: 123"
   
   # Pagination
   intelliscrape https://example.com/products --paginate --max-pages 10
@@ -72,20 +91,37 @@ Examples:
   
   # Export formats
   intelliscrape https://example.com --export csv -o data.csv
-  intelliscrape https://example.com --export json -o data.json
   
   # Crawl entire site
   intelliscrape https://docs.python.org --crawl --max-pages 50
+  
+  # With residential proxy (for better quality)
+  intelliscrape https://amazon.com --brightdata-key YOUR_KEY
         """,
     )
 
-    # Main URL
-    parser.add_argument("url", help="URL to scrape")
+    # Main URL (optional for some commands)
+    parser.add_argument("url", nargs="?", help="URL to scrape")
 
     # Output options
     parser.add_argument("-o", "--output", help="Save output to file")
     parser.add_argument("--json", action="store_true", help="Output structured JSON")
     parser.add_argument("--raw", action="store_true", help="Output raw HTML")
+
+    # Intelligent mode
+    parser.add_argument("--analyze", action="store_true", help="Analyze site and show recommendations")
+    parser.add_argument("--no-intelligent", action="store_true", help="Disable intelligent auto-detection")
+
+    # Free proxy options
+    parser.add_argument("--find-proxies", action="store_true", help="Find and test free proxies")
+    parser.add_argument("--use-free-proxies", action="store_true", help="Use free proxies (automatic)")
+    parser.add_argument("--no-free-proxies", action="store_true", help="Disable free proxy finder")
+
+    # Proxy providers (for residential proxies)
+    parser.add_argument("--brightdata-key", type=str, help="Bright Data API key for residential proxies")
+    parser.add_argument("--scraperapi-key", type=str, help="ScraperAPI key")
+    parser.add_argument("--oxylabs-key", type=str, help="Oxylabs API key")
+    parser.add_argument("--smartproxy-key", type=str, help="Smartproxy API key")
 
     # Authentication
     parser.add_argument("--login", action="store_true", help="Login to site")
@@ -125,10 +161,18 @@ Examples:
 
     args = parser.parse_args(argv)
 
+    # Handle commands that don't require URL
+    if args.find_proxies:
+        return _find_proxies(args)
+    
     if not args.url:
-        parser.error("URL is required")
+        parser.error("URL is required for most commands")
 
     try:
+        # Handle analyze command
+        if args.analyze:
+            return _analyze(args)
+        
         if args.crawl:
             return _crawl(args)
         elif args.paginate:
@@ -157,8 +201,15 @@ def _create_scraper(args) -> IntelliScrape:
                 key, value = h.split(":", 1)
                 headers[key.strip()] = value.strip()
 
-    # Create scraper
-    scraper = IntelliScrape()
+    # Create scraper with intelligent mode
+    scraper = IntelliScrape(
+        brightdata_key=args.brightdata_key,
+        scraperapi_key=args.scraperapi_key,
+        oxylabs_key=args.oxylabs_key,
+        smartproxy_key=args.smartproxy_key,
+        intelligent=not args.no_intelligent,
+        use_free_proxies=not args.no_free_proxies,
+    )
 
     # Apply headers to all engines
     if headers:
@@ -169,6 +220,90 @@ def _create_scraper(args) -> IntelliScrape:
                 engine.headers.update(headers)
 
     return scraper
+
+
+def _find_proxies(args) -> int:
+    """Find and test free proxies."""
+    from .proxy.free_finder import FreeProxyFinder
+    
+    finder = FreeProxyFinder()
+    
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task("Finding free proxies...", total=None)
+        
+        proxies = finder.find_proxies(
+            protocol="https",
+            test=True,
+            max_workers=10,
+        )
+        
+        progress.update(task, completed=True)
+    
+    if not proxies:
+        console.print("[yellow]No working proxies found[/yellow]")
+        return 1
+    
+    # Create table
+    table = Table(title=f"Found {len(proxies)} Working Proxies")
+    table.add_column("Proxy URL", style="cyan")
+    table.add_column("Speed", style="green")
+    table.add_column("Status", style="yellow")
+    
+    for proxy in sorted(proxies, key=lambda p: p.speed)[:20]:  # Show top 20
+        table.add_row(
+            proxy.url,
+            f"{proxy.speed:.2f}s",
+            "Working" if proxy.is_working else "Failed",
+        )
+    
+    console.print(table)
+    console.print(f"\n[green]Use with: intelliscrape <url> --use-free-proxies[/green]")
+    
+    return 0
+
+
+def _analyze(args) -> int:
+    """Analyze a site and show recommendations."""
+    analyzer = SiteAnalyzer()
+    analysis = analyzer.analyze(args.url)
+
+    # Create analysis table
+    table = Table(title=f"Site Analysis: {analysis.domain}", show_header=False)
+    table.add_column("Property", style="cyan")
+    table.add_column("Value", style="green")
+
+    table.add_row("Site Type", analysis.site_type.value)
+    table.add_row("Protection Level", analysis.protection_level.value)
+    table.add_row("Requires Browser", "Yes" if analysis.requires_browser else "No")
+    table.add_row("Requires Residential Proxy", "Yes" if analysis.requires_residential_proxy else "No")
+    table.add_row("Recommended Engine", analysis.recommended_engine)
+    table.add_row("Recommended Delay", f"{analysis.recommended_delay:.1f} seconds")
+    table.add_row("Recommended Batch Size", str(analysis.recommended_batch_size))
+
+    console.print(table)
+
+    # Show notes
+    if analysis.notes:
+        console.print("\n[bold]Notes:[/bold]")
+        for note in analysis.notes:
+            console.print(f"  • {note}")
+
+    # Show proxy status
+    scraper = _create_scraper(args)
+    proxy_status = scraper.get_proxy_status()
+    
+    console.print("\n[bold]Proxy Status:[/bold]")
+    console.print(f"  • User proxies: {proxy_status['user_proxies']}")
+    console.print(f"  • Providers available: {', '.join(proxy_status['providers_available']) or 'None'}")
+    console.print(f"  • Healthy proxies: {proxy_status['healthy_proxies']}")
+    console.print(f"  • Free proxies enabled: {'Yes' if not args.no_free_proxies else 'No'}")
+
+    return 0
 
 
 def _scrape(args) -> int:

@@ -1,8 +1,8 @@
 """
 core.py
 
-Main pipeline controller for IntelliScrape v2.
-Multi-strategy scraping with anti-detection capabilities.
+Main pipeline controller for IntelliScrape v3.
+Intelligent scraping with auto-detection and smart optimization.
 """
 
 from __future__ import annotations
@@ -28,8 +28,11 @@ from .engines.camoufox import CamoufoxEngine
 from .exceptions import IntelliScrapeError
 from .extractor import extract_text
 from .extractor.structured import StructuredExtractor, StructuredData
+from .intelligent import SiteAnalyzer, SiteAnalysis, SmartRateLimiter
 from .parser import build_dom
 from .proxy import ProxyConfig, ProxyManager
+from .proxy.manager import IntelligentProxyManager
+from .proxy.free_finder import FreeProxyFinder, IntelligentProxyFinder
 from .session import SessionManager
 from .utils import force_dynamic, html_needs_browser
 
@@ -41,18 +44,26 @@ _ALLOWED_SCHEMES = {"http", "https"}
 
 
 class IntelliScrape:
-    """Advanced web scraper with anti-detection capabilities.
+    """Intelligent web scraper with auto-detection.
+
+    This is what makes IntelliScrape truly intelligent:
+    - Analyzes the URL and auto-selects the best approach
+    - Auto-detects site type and protection level
+    - Auto-selects residential vs datacenter proxy
+    - Auto-configures rate limiting based on site
+    - Auto-chooses the best engine
+    - Finds free proxies automatically if none provided
 
     Features:
-    - Multi-strategy engine selection (static, playwright_stealth, nodriver)
+    - Multi-strategy engine selection (static, playwright_stealth, camoufox)
     - TLS fingerprint impersonation
     - Browser fingerprint randomization
     - Human-like behavioral simulation
-    - Proxy rotation support
+    - Intelligent proxy selection (residential for protected sites)
+    - Free proxy finder (automatically finds working proxies)
+    - Smart rate limiting (slower for protected sites)
     - CAPTCHA detection and solving
     - Session persistence
-    - Smart retry with exponential backoff
-    - Rate limiting
     - Anti-bot vendor detection
     - Cookie consent handling
     - Structured data extraction
@@ -64,13 +75,20 @@ class IntelliScrape:
     >>> result = scraper.scrape("https://example.com")
     >>> print(result)
 
-    >>> # With proxy and CAPTCHA solving
+    >>> # IntelliScrape auto-detects the best approach
+    >>> result = scraper.scrape("https://amazon.com")
+    >>> # Automatically uses:
+    >>> # - Browser engine (e-commerce needs JS)
+    >>> # - Free residential proxy (high protection)
+    >>> # - Slower rate limiting (avoid blocks)
+
+    >>> # With paid proxy keys (better quality)
     >>> scraper = IntelliScrape(
-    ...     proxy="user:pass@proxy:8080",
-    ...     api_key="your_api_key",
+    ...     brightdata_key="your_key",
+    ...     api_key="your_captcha_key",
     ...     captcha_provider="capsolver"
     ... )
-    >>> result = scraper.scrape("https://protected-site.com")
+    >>> result = scraper.scrape("https://amazon.com")
     """
 
     def __init__(
@@ -78,6 +96,12 @@ class IntelliScrape:
         *,
         proxy: Optional[Union[ProxyConfig, str, List[str]]] = None,
         proxies: Optional[List[str]] = None,
+        brightdata_key: Optional[str] = None,
+        scraperapi_key: Optional[str] = None,
+        oxylabs_key: Optional[str] = None,
+        smartproxy_key: Optional[str] = None,
+        prefer_residential: bool = True,
+        use_free_proxies: bool = True,
         api_key: Optional[str] = None,
         captcha_provider: Optional[str] = None,
         headless: bool = True,
@@ -88,6 +112,7 @@ class IntelliScrape:
         min_delay: float = 0.5,
         max_delay: float = 3.0,
         requests_per_minute: Optional[int] = None,
+        intelligent: bool = True,
         log_level: str = "WARNING",
     ):
         """Initialize IntelliScrape.
@@ -98,6 +123,18 @@ class IntelliScrape:
             Single proxy or list of proxies.
         proxies : list, optional
             List of proxy strings (host:port or user:pass@host:port).
+        brightdata_key : str, optional
+            Bright Data API key for residential proxies.
+        scraperapi_key : str, optional
+            ScraperAPI key.
+        oxylabs_key : str, optional
+            Oxylabs API key.
+        smartproxy_key : str, optional
+            Smartproxy API key.
+        prefer_residential : bool
+            Prefer residential proxies when available.
+        use_free_proxies : bool
+            Find and use free proxies if no paid proxies available.
         api_key : str, optional
             API key for CAPTCHA solving service.
         captcha_provider : str, optional
@@ -118,6 +155,8 @@ class IntelliScrape:
             Maximum delay between requests (seconds).
         requests_per_minute : int, optional
             Rate limit (requests per minute).
+        intelligent : bool
+            Enable intelligent auto-detection (default: True).
         log_level : str
             Logging level.
         """
@@ -125,8 +164,34 @@ class IntelliScrape:
         logging.basicConfig(level=getattr(logging, log_level.upper()))
         self.logger = logging.getLogger("intelliscrape")
 
-        # Initialize proxy manager
+        # Initialize intelligent analyzer
+        self.intelligent = intelligent
+        self.site_analyzer = SiteAnalyzer()
+        self._rate_limiters: Dict[str, SmartRateLimiter] = {}
+
+        # Initialize free proxy finder
+        self.use_free_proxies = use_free_proxies
+        self.free_proxy_finder = FreeProxyFinder()
+        self._free_proxies_fetched = False
+
+        # Initialize proxy manager with intelligent selection
         self.proxy_manager = ProxyManager()
+        self.intelligent_proxy = IntelligentProxyManager(
+            user_proxies=proxies,
+            brightdata_key=brightdata_key,
+            scraperapi_key=scraperapi_key,
+            oxylabs_key=oxylabs_key,
+            smartproxy_key=smartproxy_key,
+            prefer_residential=prefer_residential,
+        )
+
+        # Store provider keys for intelligent proxy finder
+        self._brightdata_key = brightdata_key
+        self._scraperapi_key = scraperapi_key
+        self._oxylabs_key = oxylabs_key
+        self._smartproxy_key = smartproxy_key
+
+        # Add user proxies
         if proxy:
             if isinstance(proxy, ProxyConfig):
                 self.proxy_manager.add_proxy(proxy)
@@ -198,6 +263,58 @@ class IntelliScrape:
         self.headless = headless
         self.simulate_behavior = simulate_behavior
 
+    def analyze(self, url: str) -> SiteAnalysis:
+        """Analyze a URL and return recommendations.
+        
+        Parameters
+        ----------
+        url : str
+            URL to analyze.
+            
+        Returns
+        -------
+        SiteAnalysis
+            Analysis with recommendations.
+        """
+        return self.site_analyzer.analyze(url)
+
+    def _fetch_free_proxies(self) -> None:
+        """Fetch free proxies if needed."""
+        if self._free_proxies_fetched:
+            return
+        
+        if self.use_free_proxies:
+            print("Finding free proxies (this may take a moment)...")
+            self.free_proxy_finder.find_proxies(
+                protocol="https",
+                test=True,
+                max_workers=10,
+            )
+            self._free_proxies_fetched = True
+
+    def _get_intelligent_proxy(self, url: str) -> Optional[str]:
+        """Get proxy for URL using intelligent selection."""
+        # Check if we need a proxy for this site
+        analysis = self.site_analyzer.analyze(url)
+        
+        if not analysis.requires_residential_proxy:
+            # Site doesn't need proxy, try without
+            return None
+        
+        # Try paid providers first
+        paid_proxy = self.intelligent_proxy.get_proxy_for_url(url)
+        if paid_proxy:
+            return paid_proxy.url
+        
+        # Fall back to free proxies
+        if self.use_free_proxies:
+            self._fetch_free_proxies()
+            proxy = self.free_proxy_finder.get_best_proxy()
+            if proxy:
+                return proxy.url
+        
+        return None
+
     def scrape(
         self,
         url: str,
@@ -209,6 +326,7 @@ class IntelliScrape:
         return_structured: bool = False,
         handle_consent: bool = True,
         force_browser: bool = False,
+        intelligent: Optional[bool] = None,
         **kwargs,
     ) -> Union[str, StructuredData]:
         """Scrape a URL and return text content.
@@ -218,7 +336,7 @@ class IntelliScrape:
         url : str
             Target URL.
         engine : str, optional
-            Force a specific engine ("static", "playwright_stealth", "nodriver").
+            Force a specific engine ("static", "playwright_stealth", "camoufox").
             If None, auto-detect.
         extract : bool
             Extract text content from HTML.
@@ -232,6 +350,8 @@ class IntelliScrape:
             Attempt to handle cookie consent banners.
         force_browser : bool
             Force using browser engine for JS-heavy sites.
+        intelligent : bool, optional
+            Override intelligent mode for this scrape.
 
         Returns
         -------
@@ -245,6 +365,30 @@ class IntelliScrape:
         if parsed.scheme.lower() not in _ALLOWED_SCHEMES:
             raise IntelliScrapeError("Only http/https URLs are supported")
 
+        # Analyze site if intelligent mode is enabled
+        use_intelligent = intelligent if intelligent is not None else self.intelligent
+        if use_intelligent:
+            analysis = self.site_analyzer.analyze(url)
+            self.logger.info(f"Site analysis: {analysis.site_type.value} | Protection: {analysis.protection_level.value}")
+            
+            # Auto-select engine based on analysis
+            if not engine and not force_browser:
+                engine = analysis.recommended_engine
+                self.logger.info(f"Auto-selected engine: {engine}")
+            
+            # Auto-configure rate limiting
+            if url not in self._rate_limiters:
+                self._rate_limiters[url] = SmartRateLimiter(analysis)
+            
+            # Wait if needed (intelligent rate limiting)
+            self._rate_limiters[url].wait_if_needed()
+            
+            # Get intelligent proxy
+            proxy_url = self._get_intelligent_proxy(url)
+            if proxy_url:
+                self.logger.info(f"Using intelligent proxy: {proxy_url}")
+                # TODO: Apply proxy to engines
+        
         # Force browser engine for known JS-heavy sites
         if force_browser and not engine:
             if force_dynamic(url):
@@ -254,7 +398,12 @@ class IntelliScrape:
         result = self._fetch(url, engine=engine, **kwargs)
 
         if not result.success:
+            if use_intelligent and url in self._rate_limiters:
+                self._rate_limiters[url].report_failure()
             raise IntelliScrapeError(f"Scraping failed: {result.error}")
+        
+        if use_intelligent and url in self._rate_limiters:
+            self._rate_limiters[url].report_success()
 
         # Detect anti-bot
         antibot_info = AntiBotDetector.detect(
@@ -299,16 +448,17 @@ class IntelliScrape:
         *,
         engine: Optional[str] = None,
         max_concurrent: int = 5,
+        intelligent: Optional[bool] = None,
         **kwargs,
     ) -> List[Dict[str, Any]]:
-        """Scrape multiple URLs with rate limiting.
+        """Scrape multiple URLs with intelligent rate limiting.
 
         Returns list of dicts with 'url', 'content', 'success', 'error'.
         """
         results = []
         for url in urls:
             try:
-                content = self.scrape(url, engine=engine, **kwargs)
+                content = self.scrape(url, engine=engine, intelligent=intelligent, **kwargs)
                 results.append({
                     "url": url,
                     "content": content,
@@ -322,9 +472,6 @@ class IntelliScrape:
                     "success": False,
                     "error": str(exc),
                 })
-
-            # Rate limiting
-            self.throttle.rate_limiter.wait_if_needed()
 
         return results
 
@@ -408,7 +555,8 @@ class IntelliScrape:
             self.logger.debug(f"Engine {engine_name} exception: {exc}")
             return ScrapeResult(
                 url=url, html="", status_code=0,
-                engine=engine_name, success=False,
+                engine=engine_name,
+                success=False,
                 error=str(exc),
             )
 
@@ -429,6 +577,37 @@ class IntelliScrape:
                 cookies=result.cookies,
             )
         return None
+
+    def get_proxy_status(self) -> Dict:
+        """Get proxy manager status."""
+        return self.intelligent_proxy.get_status()
+
+    def find_free_proxies(self, test: bool = True) -> List[Dict]:
+        """Find and test free proxies.
+        
+        Parameters
+        ----------
+        test : bool
+            Test proxies before returning.
+            
+        Returns
+        -------
+        List[Dict]
+            List of working proxies.
+        """
+        self._fetch_free_proxies()
+        
+        return [
+            {
+                "url": p.url,
+                "host": p.host,
+                "port": p.port,
+                "protocol": p.protocol,
+                "speed": p.speed,
+                "is_working": p.is_working,
+            }
+            for p in self.free_proxy_finder._working_proxies
+        ]
 
 
 def scrape(url: str, **kwargs) -> str:

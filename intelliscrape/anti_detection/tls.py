@@ -7,53 +7,57 @@ from typing import Optional
 
 
 # Browser TLS profiles for curl_cffi impersonation
+# Based on actual curl_cffi BrowserType enum
 TLS_PROFILES = {
     # Chrome profiles
+    "chrome146": "chrome146",
+    "chrome145": "chrome145",
+    "chrome142": "chrome142",
+    "chrome136": "chrome136",
+    "chrome133a": "chrome133a",
     "chrome131": "chrome131",
-    "chrome130": "chrome130",
     "chrome124": "chrome124",
+    "chrome123": "chrome123",
     "chrome120": "chrome120",
+    "chrome119": "chrome119",
+    "chrome116": "chrome116",
     "chrome110": "chrome110",
     "chrome107": "chrome107",
     "chrome104": "chrome104",
     "chrome101": "chrome101",
     "chrome100": "chrome100",
     "chrome99": "chrome99",
-    "chrome96": "chrome96",
-    "chrome92": "chrome92",
-    "chrome91": "chrome91",
-    "chrome90": "chrome90",
-    "chrome87": "chrome87",
-    "chrome72": "chrome72",
+    "chrome99_android": "chrome99_android",
+    "chrome131_android": "chrome131_android",
     # Safari profiles
+    "safari2601": "safari2601",
+    "safari260": "safari260",
+    "safari184": "safari184",
+    "safari180": "safari180",
+    "safari172_ios": "safari172_ios",
+    "safari170": "safari170",
+    "safari155": "safari155",
+    "safari153": "safari153",
     "safari15_5": "safari15_5",
     "safari15_3": "safari15_3",
-    "safari15_0": "safari15_0",
-    "safari14_1": "safari14_1",
-    "safari14_0": "safari14_0",
-    "safari13_1": "safari13_1",
-    "safari13_0": "safari13_0",
-    "safari12_1": "safari12_1",
     # Edge profiles
     "edge101": "edge101",
     "edge99": "edge99",
-    # Firefox profiles (new)
-    "firefox131": "firefox131",
-    "firefox130": "firefox130",
-    "firefox128": "firefox128",
-    "firefox120": "firefox120",
-    "firefox115": "firefox115",
-    "firefox109": "firefox109",
-    "firefox102": "firefox102",
-    "firefox91": "firefox91",
+    # Firefox profiles
+    "firefox147": "firefox147",
+    "firefox144": "firefox144",
+    "firefox135": "firefox135",
+    "firefox133": "firefox133",
+    # Tor
+    "tor145": "tor145",
 }
 
 # Browser family mapping
 BROWSER_FAMILIES = {
-    "chrome": ["chrome131", "chrome130", "chrome124", "chrome120", "chrome110", "chrome107", "chrome104", "chrome101", "chrome100", "chrome99", "chrome96", "chrome92", "chrome91", "chrome90", "chrome87", "chrome72"],
-    "safari": ["safari15_5", "safari15_3", "safari15_0", "safari14_1", "safari14_0", "safari13_1", "safari13_0", "safari12_1"],
+    "chrome": ["chrome146", "chrome145", "chrome142", "chrome136", "chrome133a", "chrome131", "chrome124", "chrome123", "chrome120", "chrome119", "chrome116", "chrome110", "chrome107", "chrome104", "chrome101", "chrome100", "chrome99"],
+    "safari": ["safari2601", "safari260", "safari184", "safari180", "safari172_ios", "safari170", "safari155", "safari153"],
     "edge": ["edge101", "edge99"],
-    "firefox": ["firefox131", "firefox130", "firefox128", "firefox120", "firefox115", "firefox109", "firefox102", "firefox91"],
+    "firefox": ["firefox147", "firefox144", "firefox135", "firefox133"],
 }
 
 
