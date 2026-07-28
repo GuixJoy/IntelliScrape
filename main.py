@@ -568,11 +568,82 @@ def debug_db():
         info["table_exists"] = table_exists
         info["row_count"] = row_count
         info["column_count"] = len(columns)
+        info["columns"] = columns
         info["status"] = "connected"
     except Exception as e:
         info["status"] = "error"
         info["error"] = f"{type(e).__name__}: {e}"
     return info
+
+
+@app.get("/debug/insert")
+def debug_insert():
+    """Test a minimal INSERT to expose the exact error."""
+    if not DATABASE_URL or not DB_AVAILABLE:
+        return {"error": "DB not available"}
+    try:
+        conn = psycopg.connect(DATABASE_URL, autocommit=True)
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO scrapes (
+                    url, content_preview,
+                    fp_hash, confidence_score,
+                    incognito, incognito_browser,
+                    is_bot, bot_signals, bot_confidence,
+                    browser_name, browser_version, user_agent, platform,
+                    screen_width, screen_height, color_depth, color_gamut,
+                    hardware_concurrency, device_memory,
+                    os_name, os_version,
+                    local_storage, session_storage, indexed_db,
+                    audio, webgl_vendor, webgl_renderer, webgl_image_hash,
+                    canvas_winding, canvas_geometry, canvas_text,
+                    plugins, languages, cookies_enabled, do_not_track,
+                    timezone, touch_max_points, touch_event, touch_start,
+                    vendor, vendor_flavors,
+                    math_constants, detected_fonts, device_type, enhanced,
+                    ip_address, ipv4, ipv6,
+                    city, region_code, region_name,
+                    country_iso, country_name, continent_code, continent_name,
+                    latitude, longitude, geo_accuracy, geo_timezone,
+                    is_anonymous, is_anonymous_proxy, is_anonymous_vpn,
+                    network, vpn_status
+                ) VALUES (
+                    %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                    %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                    %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                    %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                    %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                    %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                    %s,%s,%s,%s,%s
+                )""",
+                (
+                    "https://debug-test.example.com",
+                    "test content",
+                    "test-hash-123", 0.95,
+                    False, None,
+                    False, None, 0.0,
+                    "Chrome", "120.0", "test-agent", "Win32",
+                    1920, 1080, 24, "srgb",
+                    8, 8,
+                    "Windows", "10",
+                    True, True, True,
+                    0.123456, "Intel Inc.", "Radeon", "abc123",
+                    True, "pass", "text",
+                    None, None, True, "1",
+                    "America/New_York", 5, True, False,
+                    "Google Inc.", None,
+                    None, None, None, None,
+                    "127.0.0.1", "127.0.0.1", None,
+                    None, None, None, None,
+                    None, None, None, None,
+                    None, None, None, None,
+                    "residential", None,
+                ),
+            )
+        conn.close()
+        return {"status": "inserted", "message": "Test row inserted successfully"}
+    except Exception as e:
+        return {"status": "error", "error": f"{type(e).__name__}: {e}"}
 
 
 @app.post("/scrape")
