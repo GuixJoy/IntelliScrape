@@ -7,8 +7,14 @@ from typing import Optional
 import logging
 import json
 import os
-import requests
 from bs4 import BeautifulSoup
+
+try:
+    from curl_cffi import requests as curl_requests
+    CURL_AVAILABLE = True
+except ImportError:
+    curl_requests = None
+    CURL_AVAILABLE = False
 
 try:
     import psycopg
@@ -54,7 +60,7 @@ def init_db():
 app = FastAPI(
     title="IntelliScrape API",
     description="Scrape any website with anti-detection capabilities",
-    version="2.2.0",
+    version="2.3.0",
 )
 
 app.add_middleware(
@@ -73,6 +79,7 @@ def startup():
 class ScrapeRequest(BaseModel):
     url: HttpUrl
     raw: bool = False
+    render: bool = False
     fingerprint: Optional[dict] = None
 
 
@@ -97,25 +104,23 @@ class StatsResponse(BaseModel):
     unique_urls: int
 
 
-def scrape_basic(url: str, raw: bool = False) -> str:
-    """Basic scrape using requests + BeautifulSoup with fallback."""
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-        "Accept-Encoding": "gzip, deflate",
-        "Connection": "keep-alive",
-    }
+def scrape_basic(url: str, raw: bool = False, render_js: bool = False) -> str:
+    """Scrape using curl_cffi (TLS impersonation) with optional Playwright JS rendering."""
+
+    if render_js:
+        return scrape_with_playwright(url, raw)
+
+    if not CURL_AVAILABLE:
+        raise Exception("curl_cffi not available — cannot scrape")
 
     try:
-        resp = requests.get(url, headers=headers, timeout=30, allow_redirects=True)
+        resp = curl_requests.get(
+            url,
+            impersonate="chrome",
+            timeout=30,
+            allow_redirects=True,
+        )
         resp.raise_for_status()
-    except requests.exceptions.Timeout:
-        raise Exception("Request timed out after 30 seconds")
-    except requests.exceptions.ConnectionError:
-        raise Exception(f"Could not connect to {url}")
-    except requests.exceptions.HTTPError as e:
-        raise Exception(f"HTTP error: {e.response.status_code}")
     except Exception as e:
         raise Exception(f"Request failed: {str(e)}")
 
@@ -128,6 +133,55 @@ def scrape_basic(url: str, raw: bool = False) -> str:
         return resp.text
 
     soup = BeautifulSoup(resp.text, "html.parser")
+
+    for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
+        tag.decompose()
+
+    title = soup.title.string if soup.title else ""
+
+    meta_desc = ""
+    meta = soup.find("meta", attrs={"name": "description"})
+    if meta:
+        meta_desc = meta.get("content", "")
+
+    main = soup.find("main") or soup.find("article") or soup.find("body")
+    if main:
+        text = main.get_text(separator="\n", strip=True)
+    else:
+        text = soup.get_text(separator="\n", strip=True)
+
+    parts = []
+    if title:
+        parts.append(f"Title: {title}")
+    if meta_desc:
+        parts.append(f"Description: {meta_desc}")
+    parts.append("")
+    parts.append(text)
+
+    return "\n".join(parts)
+
+
+def scrape_with_playwright(url: str, raw: bool = False) -> str:
+    """Render JavaScript using Playwright headless browser."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        raise Exception("Playwright not installed — JS rendering unavailable")
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        )
+        page = context.new_page()
+        page.goto(url, wait_until="networkidle", timeout=30000)
+        content = page.content()
+        browser.close()
+
+    if raw:
+        return content
+
+    soup = BeautifulSoup(content, "html.parser")
 
     for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
         tag.decompose()
@@ -183,7 +237,7 @@ def store_scrape(url: str, content: str, fingerprint: Optional[dict], ip_address
 def root():
     return {
         "name": "IntelliScrape API",
-        "version": "2.2.0",
+        "version": "2.3.0",
         "endpoints": {
             "scrape": "POST /scrape",
             "scrapes": "GET /scrapes",
@@ -194,7 +248,7 @@ def root():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": "2.2.0"}
+    return {"status": "ok", "version": "2.3.0"}
 
 
 @app.post("/scrape")
@@ -203,7 +257,7 @@ def scrape_url(req: ScrapeRequest, request: Request):
     url_str = str(req.url)
     logger.info(f"Scrape request: {url_str}")
     try:
-        content = scrape_basic(url_str, raw=req.raw)
+        content = scrape_basic(url_str, raw=req.raw, render_js=req.render)
         if not content or len(content.strip()) == 0:
             raise Exception("Empty response from target website")
         logger.info(f"Scrape success: {url_str} ({len(content)} chars)")
