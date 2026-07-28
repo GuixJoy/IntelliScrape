@@ -1,20 +1,55 @@
 """FastAPI backend for IntelliScrape."""
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, HttpUrl
+from typing import Optional
 import logging
-import traceback
+import json
+import os
+import psycopg2
+import psycopg2.extras
 import requests
 from bs4 import BeautifulSoup
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+DATABASE_URL = os.environ.get("DATABASE_URL")
+
+def get_db():
+    conn = psycopg2.connect(DATABASE_URL)
+    conn.autocommit = True
+    return conn
+
+def init_db():
+    if not DATABASE_URL:
+        logger.warning("DATABASE_URL not set — scrape logging disabled")
+        return
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS scrapes (
+                id SERIAL PRIMARY KEY,
+                url TEXT NOT NULL,
+                content_preview TEXT,
+                fingerprint JSONB,
+                ip_address TEXT,
+                user_agent TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        cur.close()
+        conn.close()
+        logger.info("Database initialized — scrapes table ready")
+    except Exception as e:
+        logger.error(f"Database init failed: {e}")
+
 app = FastAPI(
     title="IntelliScrape API",
     description="Scrape any website with anti-detection capabilities",
-    version="2.1.1",
+    version="2.2.0",
 )
 
 app.add_middleware(
@@ -25,16 +60,36 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.on_event("startup")
+def startup():
+    init_db()
+
 
 class ScrapeRequest(BaseModel):
     url: HttpUrl
     raw: bool = False
+    fingerprint: Optional[dict] = None
 
 
 class ScrapeResponse(BaseModel):
     url: str
     content: str
     success: bool = True
+
+
+class ScrapeLog(BaseModel):
+    id: int
+    url: str
+    content_preview: Optional[str]
+    fingerprint: Optional[dict]
+    ip_address: Optional[str]
+    user_agent: Optional[str]
+    created_at: str
+
+
+class StatsResponse(BaseModel):
+    total_scrapes: int
+    unique_urls: int
 
 
 def scrape_basic(url: str, raw: bool = False) -> str:
@@ -62,7 +117,6 @@ def scrape_basic(url: str, raw: bool = False) -> str:
     content_type = resp.headers.get("content-type", "")
 
     if raw:
-        # Ensure we return decoded text, not raw bytes
         return resp.text
 
     if "json" in content_type:
@@ -70,27 +124,22 @@ def scrape_basic(url: str, raw: bool = False) -> str:
 
     soup = BeautifulSoup(resp.text, "html.parser")
 
-    # Remove script and style elements
     for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
         tag.decompose()
 
-    # Get title
     title = soup.title.string if soup.title else ""
 
-    # Get meta description
     meta_desc = ""
     meta = soup.find("meta", attrs={"name": "description"})
     if meta:
         meta_desc = meta.get("content", "")
 
-    # Get main content
     main = soup.find("main") or soup.find("article") or soup.find("body")
     if main:
         text = main.get_text(separator="\n", strip=True)
     else:
         text = soup.get_text(separator="\n", strip=True)
 
-    # Build output
     parts = []
     if title:
         parts.append(f"Title: {title}")
@@ -102,24 +151,50 @@ def scrape_basic(url: str, raw: bool = False) -> str:
     return "\n".join(parts)
 
 
+def store_scrape(url: str, content: str, fingerprint: Optional[dict], ip_address: str, user_agent: str):
+    """Store scrape record in Neon DB."""
+    if not DATABASE_URL:
+        return
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute(
+            """INSERT INTO scrapes (url, content_preview, fingerprint, ip_address, user_agent)
+               VALUES (%s, %s, %s, %s, %s)""",
+            (
+                url,
+                content[:500] if content else None,
+                json.dumps(fingerprint) if fingerprint else None,
+                ip_address,
+                user_agent,
+            ),
+        )
+        cur.close()
+        conn.close()
+    except Exception as e:
+        logger.error(f"Failed to store scrape: {e}")
+
+
 @app.get("/")
 def root():
     return {
         "name": "IntelliScrape API",
-        "version": "2.1.1",
+        "version": "2.2.0",
         "endpoints": {
             "scrape": "POST /scrape",
-        }
+            "scrapes": "GET /scrapes",
+            "stats": "GET /stats",
+        },
     }
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": "2.1.0"}
+    return {"status": "ok", "version": "2.2.0"}
 
 
 @app.post("/scrape")
-def scrape_url(req: ScrapeRequest):
+def scrape_url(req: ScrapeRequest, request: Request):
     """Scrape a website and return clean text."""
     url_str = str(req.url)
     logger.info(f"Scrape request: {url_str}")
@@ -128,11 +203,66 @@ def scrape_url(req: ScrapeRequest):
         if not content or len(content.strip()) == 0:
             raise Exception("Empty response from target website")
         logger.info(f"Scrape success: {url_str} ({len(content)} chars)")
+
+        ip_address = request.client.host if request.client else "unknown"
+        user_agent = request.headers.get("user-agent", "unknown")
+        store_scrape(url_str, content, req.fingerprint, ip_address, user_agent)
+
         return ScrapeResponse(url=url_str, content=content)
     except Exception as e:
         error_msg = str(e)
         logger.error(f"Scrape failed: {url_str} -> {error_msg}")
         raise HTTPException(status_code=400, detail=error_msg)
+
+
+@app.get("/scrapes")
+def get_scrapes(limit: int = 100):
+    """Get recent scrape logs."""
+    if not DATABASE_URL:
+        raise HTTPException(status_code=503, detail="Database not configured")
+    try:
+        conn = get_db()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
+            """SELECT id, url, content_preview, fingerprint, ip_address, user_agent, created_at
+               FROM scrapes ORDER BY created_at DESC LIMIT %s""",
+            (min(limit, 500),),
+        )
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return [ScrapeLog(
+            id=r["id"],
+            url=r["url"],
+            content_preview=r["content_preview"],
+            fingerprint=json.loads(r["fingerprint"]) if r["fingerprint"] else None,
+            ip_address=r["ip_address"],
+            user_agent=r["user_agent"],
+            created_at=r["created_at"].isoformat() if r["created_at"] else "",
+        ).model_dump() for r in rows]
+    except Exception as e:
+        logger.error(f"Failed to fetch scrapes: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/stats")
+def get_stats():
+    """Get scrape statistics."""
+    if not DATABASE_URL:
+        raise HTTPException(status_code=503, detail="Database not configured")
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM scrapes")
+        total = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(DISTINCT url) FROM scrapes")
+        unique = cur.fetchone()[0]
+        cur.close()
+        conn.close()
+        return StatsResponse(total_scrapes=total, unique_urls=unique).model_dump()
+    except Exception as e:
+        logger.error(f"Failed to fetch stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":
