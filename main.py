@@ -428,61 +428,39 @@ def store_scrape(url: str, content: str, fingerprint: Optional[dict], ip_address
                     is_anonymous, is_anonymous_proxy, is_anonymous_vpn,
                     network, vpn_status
                 ) VALUES (
-                    %s, %s,
-                    %s, %s,
-                    %s, %s,
-                    %s, %s, %s,
-                    %s, %s, %s, %s,
-                    %s, %s, %s, %s,
-                    %s, %s,
-                    %s, %s,
-                    %s, %s, %s,
-                    %s, %s, %s, %s,
-                    %s, %s, %s,
-                    %s, %s, %s, %s,
-                    %s, %s, %s, %s,
-                    %s, %s,
-                    %s, %s, %s, %s,
-                    %s, %s, %s,
-                    %s, %s, %s, %s,
-                    %s, %s, %s, %s,
-                    %s, %s, %s,
-                    %s, %s
+                    %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                    %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                    %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                    %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                    %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                    %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                    %s,%s,%s,%s,%s
                 )""",
                 (
                     url,
                     content[:500] if content else None,
-                    # top-level
                     fp.get("hash"),
                     fp.get("confidenceScore"),
-                    # incognito
                     fp.get("incognito"),
                     fp.get("incognitoBrowser"),
-                    # bot
                     fp.get("isBot"),
                     json.dumps(fp.get("botSignals")) if fp.get("botSignals") else None,
                     fp.get("botConfidence"),
-                    # browser
                     fp.get("browserName"),
                     fp.get("browserVersion"),
                     user_agent,
                     fp.get("platform"),
-                    # display
                     fp.get("screenW"),
                     fp.get("screenH"),
                     fp.get("colorDepth"),
                     fp.get("colorGamut"),
-                    # hardware
                     fp.get("hardwareConcurrency"),
                     fp.get("deviceMemory"),
-                    # os
                     fp.get("osName"),
                     fp.get("osVersion"),
-                    # storage
                     fp.get("localStorage"),
                     fp.get("sessionStorage"),
                     fp.get("indexedDB"),
-                    # media
                     fp.get("audio"),
                     fp.get("webGLVendor"),
                     fp.get("webGLRenderer"),
@@ -490,25 +468,20 @@ def store_scrape(url: str, content: str, fingerprint: Optional[dict], ip_address
                     fp.get("canvasWinding"),
                     fp.get("canvasGeometry"),
                     fp.get("canvasText"),
-                    # plugins & languages
                     json.dumps(fp.get("plugins")) if fp.get("plugins") else None,
                     json.dumps(fp.get("languages")) if fp.get("languages") else None,
                     fp.get("cookiesEnabled"),
                     fp.get("doNotTrack"),
-                    # timezone & touch
                     fp.get("timezone"),
                     fp.get("touchMaxPoints"),
                     fp.get("touchEvent"),
                     fp.get("touchStart"),
-                    # vendor
                     fp.get("vendor"),
                     json.dumps(fp.get("vendorFlavors")) if fp.get("vendorFlavors") else None,
-                    # math & fonts
                     json.dumps(fp.get("mathConstants")) if fp.get("mathConstants") else None,
                     json.dumps(fp.get("detectedFonts")) if fp.get("detectedFonts") else None,
                     json.dumps(fp.get("deviceType")) if fp.get("deviceType") else None,
                     json.dumps(fp.get("enhanced")) if fp.get("enhanced") else None,
-                    # geolocation
                     ip_address,
                     fp.get("ipv4"),
                     fp.get("ipv6"),
@@ -532,7 +505,7 @@ def store_scrape(url: str, content: str, fingerprint: Optional[dict], ip_address
             )
         conn.close()
     except Exception as e:
-        logger.error(f"Failed to store scrape: {e}")
+        logger.error(f"Failed to store scrape: {type(e).__name__}: {e}")
 
 
 @app.get("/")
