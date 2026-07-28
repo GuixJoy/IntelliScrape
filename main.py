@@ -7,8 +7,7 @@ from typing import Optional
 import logging
 import json
 import os
-import psycopg2
-import psycopg2.extras
+import psycopg
 import requests
 from bs4 import BeautifulSoup
 
@@ -18,9 +17,7 @@ logger = logging.getLogger(__name__)
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 def get_db():
-    conn = psycopg2.connect(DATABASE_URL)
-    conn.autocommit = True
-    return conn
+    return psycopg.connect(DATABASE_URL, autocommit=True)
 
 def init_db():
     if not DATABASE_URL:
@@ -28,19 +25,18 @@ def init_db():
         return
     try:
         conn = get_db()
-        cur = conn.cursor()
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS scrapes (
-                id SERIAL PRIMARY KEY,
-                url TEXT NOT NULL,
-                content_preview TEXT,
-                fingerprint JSONB,
-                ip_address TEXT,
-                user_agent TEXT,
-                created_at TIMESTAMPTZ DEFAULT NOW()
-            )
-        """)
-        cur.close()
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scrapes (
+                    id SERIAL PRIMARY KEY,
+                    url TEXT NOT NULL,
+                    content_preview TEXT,
+                    fingerprint JSONB,
+                    ip_address TEXT,
+                    user_agent TEXT,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                )
+            """)
         conn.close()
         logger.info("Database initialized — scrapes table ready")
     except Exception as e:
@@ -157,19 +153,18 @@ def store_scrape(url: str, content: str, fingerprint: Optional[dict], ip_address
         return
     try:
         conn = get_db()
-        cur = conn.cursor()
-        cur.execute(
-            """INSERT INTO scrapes (url, content_preview, fingerprint, ip_address, user_agent)
-               VALUES (%s, %s, %s, %s, %s)""",
-            (
-                url,
-                content[:500] if content else None,
-                json.dumps(fingerprint) if fingerprint else None,
-                ip_address,
-                user_agent,
-            ),
-        )
-        cur.close()
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO scrapes (url, content_preview, fingerprint, ip_address, user_agent)
+                   VALUES (%s, %s, %s, %s, %s)""",
+                (
+                    url,
+                    content[:500] if content else None,
+                    json.dumps(fingerprint) if fingerprint else None,
+                    ip_address,
+                    user_agent,
+                ),
+            )
         conn.close()
     except Exception as e:
         logger.error(f"Failed to store scrape: {e}")
@@ -222,24 +217,26 @@ def get_scrapes(limit: int = 100):
         raise HTTPException(status_code=503, detail="Database not configured")
     try:
         conn = get_db()
-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        cur.execute(
-            """SELECT id, url, content_preview, fingerprint, ip_address, user_agent, created_at
-               FROM scrapes ORDER BY created_at DESC LIMIT %s""",
-            (min(limit, 500),),
-        )
-        rows = cur.fetchall()
-        cur.close()
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT id, url, content_preview, fingerprint, ip_address, user_agent, created_at
+                   FROM scrapes ORDER BY created_at DESC LIMIT %s""",
+                (min(limit, 500),),
+            )
+            rows = cur.fetchall()
         conn.close()
-        return [ScrapeLog(
-            id=r["id"],
-            url=r["url"],
-            content_preview=r["content_preview"],
-            fingerprint=json.loads(r["fingerprint"]) if r["fingerprint"] else None,
-            ip_address=r["ip_address"],
-            user_agent=r["user_agent"],
-            created_at=r["created_at"].isoformat() if r["created_at"] else "",
-        ).model_dump() for r in rows]
+        result = []
+        for r in rows:
+            result.append(ScrapeLog(
+                id=r[0],
+                url=r[1],
+                content_preview=r[2],
+                fingerprint=json.loads(r[3]) if r[3] else None,
+                ip_address=r[4],
+                user_agent=r[5],
+                created_at=r[6].isoformat() if r[6] else "",
+            ).model_dump())
+        return result
     except Exception as e:
         logger.error(f"Failed to fetch scrapes: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -252,12 +249,11 @@ def get_stats():
         raise HTTPException(status_code=503, detail="Database not configured")
     try:
         conn = get_db()
-        cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM scrapes")
-        total = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(DISTINCT url) FROM scrapes")
-        unique = cur.fetchone()[0]
-        cur.close()
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM scrapes")
+            total = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(DISTINCT url) FROM scrapes")
+            unique = cur.fetchone()[0]
         conn.close()
         return StatsResponse(total_scrapes=total, unique_urls=unique).model_dump()
     except Exception as e:
