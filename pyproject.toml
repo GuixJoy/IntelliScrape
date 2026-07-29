@@ -1,19 +1,14 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=77.0.0"]
 build-backend = "setuptools.build_meta"
 
 
 [project]
 name = "intelliscrape"
-version = "2.3.0"
+version = "2.5.0"
 description = "Advanced web scraping library with anti-detection, TLS impersonation, and stealth browsing. Scrapes 98% of websites."
 readme = "README.md"
-license = {text = "MIT"}
-
-authors = [
-  {name = "GuixJoy"}
-]
-
+license = "MIT"
 requires-python = ">=3.9"
 
 dependencies = [
@@ -22,9 +17,11 @@ dependencies = [
     "lxml",
     "curl_cffi>=0.7.0",
     "playwright>=1.40.0",
-    "fastapi[standard]>=0.100.0",
-    "uvicorn>=0.23.0",
-    "psycopg[binary]>=3.1.0",
+    "rich",
+]
+
+authors = [
+  {name = "GuixJoy", email = "guixjoy@users.noreply.github.com"},
 ]
 
 keywords = [
@@ -44,11 +41,19 @@ keywords = [
 ]
 
 classifiers = [
-    "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
     "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Internet :: WWW/HTTP :: Indexing/Search",
     "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Information Analysis",
 ]
 
 
@@ -75,7 +80,6 @@ all = [
 dev = [
     "pytest",
     "pytest-asyncio",
-    "black",
     "ruff",
 ]
 

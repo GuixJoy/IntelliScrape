@@ -106,6 +106,7 @@ class IntelliScrape:
         captcha_provider: Optional[str] = None,
         headless: bool = True,
         simulate_behavior: bool = True,
+        manual_captcha: bool = False,
         tls_profile: str = "chrome131",
         session_profile: Optional[str] = None,
         max_retries: int = 3,
@@ -143,6 +144,9 @@ class IntelliScrape:
             Run browser in headless mode.
         simulate_behavior : bool
             Enable human-like behavioral simulation.
+        manual_captcha : bool
+            When a CAPTCHA is detected, open a visible browser window
+            and wait for the user to solve it manually, then continue.
         tls_profile : str
             TLS fingerprint profile to impersonate.
         session_profile : str, optional
@@ -262,6 +266,7 @@ class IntelliScrape:
 
         self.headless = headless
         self.simulate_behavior = simulate_behavior
+        self.manual_captcha = manual_captcha
 
     def analyze(self, url: str) -> SiteAnalysis:
         """Analyze a URL and return recommendations.
@@ -494,9 +499,11 @@ class IntelliScrape:
         # If specific engine requested, use only that
         if engine and engine in self.engines:
             result = self._fetch_with_engine(url, engine, **kwargs)
-            if result.success:
-                return result
-            raise IntelliScrapeError(f"Engine {engine} failed: {result.error}")
+            if result.success and not html_needs_browser(result.html):
+                return self._handle_manual_captcha(url, result)
+            # If engine succeeded but returned JS-only content, fall through to escalation
+            if not result.success:
+                raise IntelliScrapeError(f"Engine {engine} failed: {result.error}")
 
         # Auto-detect: try engines in order with fallback
         engine_order = ["static", "playwright_stealth", "camoufox", "nodriver"]
@@ -512,7 +519,7 @@ class IntelliScrape:
                 # Check if we got meaningful content
                 if not html_needs_browser(result.html):
                     self.logger.info(f"Success with engine: {engine_name}")
-                    return result
+                    return self._handle_manual_captcha(url, result)
                 
                 # Content needs browser, try next engine
                 self.logger.info(f"Engine {engine_name} returned JS-only content, trying next...")
@@ -524,9 +531,26 @@ class IntelliScrape:
         # All engines failed or returned JS-only content
         if last_result and last_result.success:
             # We got some content, return it
-            return last_result
+            return self._handle_manual_captcha(url, last_result)
         
         raise IntelliScrapeError(f"All engines failed for {url}")
+
+    def _handle_manual_captcha(self, url: str, result: ScrapeResult) -> ScrapeResult:
+        """Check for CAPTCHA and wait for manual solving if enabled.
+
+        If ``manual_captcha`` is True and a CAPTCHA is detected in the HTML,
+        a visible browser is opened for the user to solve it, and the page is
+        re-fetched.  Otherwise the original result is returned unchanged.
+        """
+        if not self.manual_captcha:
+            return result
+
+        captcha_info = CaptchaDetector.detect(result.html, url)
+        if captcha_info is None:
+            return result
+
+        self.logger.info(f"CAPTCHA detected ({captcha_info.captcha_type.value}), waiting for manual solve")
+        return self._wait_for_manual_captcha(url, captcha_info)
 
     def _fetch_with_engine(self, url: str, engine_name: str, **kwargs) -> ScrapeResult:
         """Fetch using a specific engine with retry."""
@@ -577,6 +601,102 @@ class IntelliScrape:
                 cookies=result.cookies,
             )
         return None
+
+    def _wait_for_manual_captcha(self, url: str, captcha_info: CaptchaInfo) -> ScrapeResult:
+        """Open a visible browser and wait for the user to solve a CAPTCHA.
+
+        Parameters
+        ----------
+        url : str
+            The URL that contains the CAPTCHA.
+        captcha_info : CaptchaInfo
+            Information about the detected CAPTCHA.
+
+        Returns
+        -------
+        ScrapeResult
+            The re-fetched result after the user solves the CAPTCHA.
+        """
+        from rich.console import Console as RichConsole
+
+        _console = RichConsole()
+        _console.print(
+            f"\n[yellow]CAPTCHA detected: {captcha_info.captcha_type.value}[/yellow]"
+        )
+        _console.print(
+            "[bold]A browser window will open. Solve the CAPTCHA in the browser, "
+            "then press Enter here to continue...[/bold]\n"
+        )
+
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            _console.print(
+                "[red]Playwright is required for manual CAPTCHA solving. "
+                "Run: pip install playwright && playwright install chromium[/red]"
+            )
+            return ScrapeResult(
+                url=url, html="", status_code=0,
+                engine="manual_captcha", success=False,
+                error="Playwright not installed",
+            )
+
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(
+                    headless=False,
+                    args=[
+                        "--disable-blink-features=AutomationControlled",
+                        "--no-sandbox",
+                        "--window-size=1920,1080",
+                    ],
+                )
+
+                fp = self.fingerprint_gen.generate()
+                context = browser.new_context(
+                    viewport={"width": fp.viewport_width, "height": fp.viewport_height},
+                    user_agent=(
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/131.0.0.0 Safari/537.36"
+                    ),
+                    locale=fp.language,
+                    timezone_id=fp.timezone,
+                )
+
+                page = context.new_page()
+                page.goto(url, wait_until="domcontentloaded", timeout=60000)
+
+                # Wait for user to solve CAPTCHA
+                input("Press Enter after solving the CAPTCHA...")
+
+                html = page.content()
+                status_code = 200
+
+                new_cookies = {}
+                for cookie in context.cookies():
+                    new_cookies[cookie["name"]] = cookie["value"]
+
+                browser.close()
+
+                _console.print("[green]CAPTCHA solved! Continuing...[/green]\n")
+
+                return ScrapeResult(
+                    url=url,
+                    html=html,
+                    status_code=status_code,
+                    cookies=new_cookies,
+                    engine="manual_captcha",
+                    success=True,
+                )
+
+        except Exception as exc:
+            _console.print(f"[red]Manual CAPTCHA failed: {exc}[/red]")
+            return ScrapeResult(
+                url=url, html="", status_code=0,
+                engine="manual_captcha", success=False,
+                error=str(exc),
+            )
 
     def get_proxy_status(self) -> Dict:
         """Get proxy manager status."""

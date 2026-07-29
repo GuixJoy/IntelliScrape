@@ -157,6 +157,19 @@ def looks_like_js_page(html: HtmlInput) -> bool:
 
     # Large pages are almost always static
     if len(normalized) > 50000:
+        # BUT: check if it's a large page with an empty framework container
+        # (e.g. React SPA where only the shell/accessibility widget is in HTML)
+        if _contains_any(html_lower, _FRAMEWORK_MARKERS):
+            try:
+                soup = BeautifulSoup(normalized, "html.parser")
+                for marker in ('root', 'app', '__next'):
+                    container = soup.find(id=marker)
+                    if container:
+                        container_text = container.get_text(" ", strip=True)
+                        if len(container_text) < 50:
+                            return True
+            except Exception:
+                pass
         return False
 
     # Login markers only matter on small pages

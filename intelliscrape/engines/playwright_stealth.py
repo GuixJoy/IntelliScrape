@@ -203,9 +203,23 @@ class PlaywrightStealthEngine(BaseEngine):
                     page.set_extra_http_headers(headers)
 
                 # Navigate to page
-                response = page.goto(url, wait_until=wait_until, timeout=timeout * 1000)
+                response = page.goto(url, wait_until="networkidle", timeout=timeout * 1000)
 
-                # Wait for page to stabilize
+                # Wait for JS-rendered content (React, Vue, Angular SPAs)
+                try:
+                    page.wait_for_function(
+                        """() => {
+                            const root = document.getElementById('root') || document.getElementById('app')
+                                || document.getElementById('__next');
+                            if (!root) return true;
+                            return root.innerText.trim().length > 50;
+                        }""",
+                        timeout=15000,
+                    )
+                except Exception:
+                    pass
+
+                # Extra stabilization delay
                 page.wait_for_timeout(2000)
 
                 # Simulate human behavior
@@ -346,6 +360,21 @@ class PlaywrightAsyncStealthEngine(BaseEngine):
                     await page.set_extra_http_headers(headers)
 
                 response = await page.goto(url, wait_until="networkidle", timeout=timeout * 1000)
+
+                # Wait for JS-rendered content (React, Vue, Angular SPAs)
+                try:
+                    await page.wait_for_function(
+                        """() => {
+                            const root = document.getElementById('root') || document.getElementById('app')
+                                || document.getElementById('__next');
+                            if (!root) return true;
+                            return root.innerText.trim().length > 50;
+                        }""",
+                        timeout=15000,
+                    )
+                except Exception:
+                    pass
+
                 await page.wait_for_timeout(2000)
 
                 html = await page.content()

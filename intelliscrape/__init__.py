@@ -87,7 +87,7 @@ from .cookies import CookieManager, CookieData
 from .interceptor import RequestInterceptor, ResponseModifier, InterceptedRequest, InterceptedResponse
 from .ip_manager import IPManager, NaturalRotator, Proxy, ProxyType, IPInfo
 
-__version__ = "2.4.0"
+__version__ = "2.5.0"
 
 __all__ = [
     # Main API

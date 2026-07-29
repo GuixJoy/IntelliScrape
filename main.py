@@ -170,7 +170,7 @@ def init_db():
 app = FastAPI(
     title="IntelliScrape API",
     description="Scrape any website with anti-detection capabilities",
-    version="2.3.0",
+    version="2.5.0",
 )
 
 app.add_middleware(
@@ -519,7 +519,7 @@ def store_scrape(url: str, content: str, fingerprint: Optional[dict], ip_address
 def root():
     return {
         "name": "IntelliScrape API",
-        "version": "2.3.0",
+        "version": "2.5.0",
         "endpoints": {
             "scrape": "POST /scrape",
             "scrapes": "GET /scrapes",
@@ -530,7 +530,7 @@ def root():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": "2.3.0"}
+    return {"status": "ok", "version": "2.5.0"}
 
 
 @app.get("/debug/db")

@@ -1,25 +1,40 @@
+<div align="center">
+
 # IntelliScrape
 
-[![PyPI version](https://img.shields.io/pypi/v/intelliscrape.svg)](https://pypi.org/project/intelliscrape/)
-[![Python](https://img.shields.io/pypi/pyversions/intelliscrape.svg)](https://pypi.org/project/intelliscrape/)
-[![Downloads](https://img.shields.io/pypi/dm/intelliscrape.svg)](https://pypi.org/project/intelliscrape/)
-[![License](https://img.shields.io/pypi/l/intelliscrape.svg)](https://github.com/GuixJoy/IntelliScrape/blob/main/LICENSE)
+**Scrape anything.**
 
-**Scrape anything. Nothing scrapes back.**
+A Python web scraping library with anti-detection, TLS fingerprint impersonation, and stealth browsing.
 
-A Python toolkit that bypasses Cloudflare, DataDome, Akamai, and PerimeterX — shipped as a CLI, a Python API, and a hosted service. Exports straight to CSV, JSON, Excel, or SQLite.
+[![PyPI version](https://img.shields.io/pypi/v/intelliscrape?color=blue&label=PyPI&logo=pypi&logoColor=white)](https://pypi.org/project/intelliscrape/)
+[![Python](https://img.shields.io/pypi/pyversions/intelliscrape?logo=python&logoColor=white)](https://pypi.org/project/intelliscrape/)
+[![Downloads](https://img.shields.io/pypi/dm/intelliscrape?color=green&label=Downloads&logo=python&logoColor=white)](https://pypi.org/project/intelliscrape/)
+[![License](https://img.shields.io/pypi/l/intelliscrape?color=yellow)](https://github.com/GuixJoy/IntelliScrape/blob/main/LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/GuixJoy/IntelliScrape?logo=github)](https://github.com/GuixJoy/IntelliScrape)
 
-<div align="center">
-  <img src="demo.gif" alt="IntelliScrape Demo" width="800">
+[Installation](#installation) | [Quick Start](#quick-start) | [CLI Reference](#cli-reference) | [Library API](#library-api-reference) [Examples](#examples) | [Engine System](#engine-system) | [Features](#features)
+
 </div>
 
 ---
 
-## What is this?
+## What is IntelliScrape?
 
-IntelliScrape is a Python web scraping library that **scrapes 98% of websites** out of the box. It uses a 4-tier engine system that automatically escalates from fast HTTP requests to full browser automation — so you get the cheapest, fastest method that works, and heavier weapons only when needed.
+IntelliScrape is a Python web scraping library that **scrapes 98% of websites** out of the box. It uses a **4-tier engine system** that automatically escalates from fast HTTP requests to full browser automation — you get the cheapest, fastest method that works, and heavier weapons only when needed.
 
 No more switching between `requests`, `playwright`, and `selenium`. No more debugging why your scraper got blocked. Just `scrape(url)` and you're done.
+
+**Key capabilities:**
+- 4-tier engine escalation (static → Playwright → Camoufox → nodriver)
+- TLS fingerprint impersonation (JA3/JA4 bypass)
+- Browser fingerprint randomization
+- Human-like behavioral simulation
+- CAPTCHA detection, automated solving, and manual solving
+- Anti-bot vendor detection (Cloudflare, Akamai, DataDome, PerimeterX)
+- Intelligent site analysis and auto-configuration
+- Proxy rotation with free proxy finder
+- Export to JSON, CSV, Excel, SQLite, Text, Markdown
+- Async support for concurrent scraping
 
 ---
 
@@ -29,66 +44,63 @@ No more switching between `requests`, `playwright`, and `selenium`. No more debu
 pip install intelliscrape
 ```
 
-That's it. The core library handles most sites. For protected sites:
+### Optional Extras
 
-```bash
-# For stealth browsing (bypasses bot detection)
-pip install intelliscrape[stealth]
-
-# For CAPTCHA solving
-pip install intelliscrape[captcha]
-
-# Everything
-pip install intelliscrape[all]
-```
+| Extra | Command | What it adds |
+|---|---|---|
+| `stealth` | `pip install intelliscrape[stealth]` | nodriver engine (anti-WebDriver detection) |
+| `camoufox` | `pip install intelliscrape[camoufox]` | Camoufox engine (Firefox-based, C++ patches) |
+| `captcha` | `pip install intelliscrape[captcha]` | CapSolver integration (reCAPTCHA, hCaptcha, Turnstile) |
+| `async` | `pip install intelliscrape[async]` | Async/concurrent scraping |
+| `all` | `pip install intelliscrape[all]` | Everything above |
+| `dev` | `pip install intelliscrape[dev]` | pytest, ruff |
 
 ---
 
 ## Quick Start
 
-### Command Line (Simplest)
-
-```bash
-# Scrape any website
-intelliscrape https://example.com
-
-# Save to file
-intelliscrape https://example.com -o output.txt
-
-# Get JSON with metadata
-intelliscrape https://example.com --json
-
-# Crawl entire site
-intelliscrape https://docs.python.org --crawl
-```
-
-### Python (One-liner)
+### One-liner (Python)
 
 ```python
 from intelliscrape import scrape
 
-text = scrape("https://news.ycombinator.com")
+text = scrape("https://example.com")
 print(text[:500])
 ```
 
-### Get structured data (title, description, meta tags)
+### CLI
+
+```bash
+intelliscrape https://example.com
+```
+
+### Full-featured class
 
 ```python
 from intelliscrape import IntelliScrape
 
 scraper = IntelliScrape()
-data = scraper.get_structured("https://github.com")
-
-print(data.title)
-print(data.description)
-print(data.og_data)
+result = scraper.scrape("https://example.com")
+print(result)
 ```
 
-### Scrape with proxy
+### With proxy
 
 ```python
 scraper = IntelliScrape(proxy="user:pass@proxy:8080")
-text = scraper.scrape("https://protected-site.com")
+result = scraper.scrape("https://protected-site.com")
+```
+
+### Get structured data
+
+```python
+scraper = IntelliScrape()
+data = scraper.get_structured("https://github.com")
+
+print(data.title)          # Page title
+print(data.description)    # Meta description
+print(data.og_data)        # OpenGraph tags
+print(data.json_ld)        # JSON-LD structured data
 ```
 
 ### Crawl entire website
@@ -100,224 +112,688 @@ result = crawl("https://docs.python.org", max_pages=100)
 print(f"Scraped {result.total_pages} pages")
 
 for page in result.pages:
-    print(f"{page.url}: {len(page.content)} chars")
+    print(f"  {page.url}: {len(page.content)} chars")
 ```
 
 ---
 
-## CLI Usage
+## CLI Reference
+
+```
+intelliscrape [URL] [OPTIONS]
+```
+
+### Output
+
+| Flag | Description |
+|---|---|
+| `-o, --output FILE` | Save output to file |
+| `--json` | Structured JSON (title, description, meta tags) |
+| `--raw` | Raw HTML instead of extracted text |
+
+### Intelligent Mode
+
+| Flag | Description |
+|---|---|
+| `--analyze` | Analyze site and show recommendations |
+| `--no-intelligent` | Disable intelligent auto-detection |
+
+### Engine
+
+| Flag | Description |
+|---|---|
+| `--force-browser` | Force browser engine for JS-heavy sites |
+| `--manual-captcha` | Open visible browser for manual CAPTCHA solving |
+
+### Proxy
+
+| Flag | Description |
+|---|---|
+| `--use-free-proxies` | Use free proxies automatically |
+| `--no-free-proxies` | Disable free proxy finder |
+| `--find-proxies` | Find and test free proxies (no scraping) |
+| `--brightdata-key KEY` | Bright Data API key |
+| `--scraperapi-key KEY` | ScraperAPI key |
+| `--oxylabs-key KEY` | Oxylabs API key |
+| `--smartproxy-key KEY` | Smartproxy API key |
+
+### Authentication
+
+| Flag | Description |
+|---|---|
+| `--login` | Login before scraping |
+| `--username USER` | Username/email |
+| `--password PASS` | Password |
+| `--login-url URL` | Explicit login URL |
+
+### Cookies
+
+| Flag | Description |
+|---|---|
+| `--save-cookies FILE` | Save cookies to JSON |
+| `--load-cookies FILE` | Load cookies from JSON |
+
+### Request Modification
+
+| Flag | Description |
+|---|---|
+| `--block PATTERNS` | Block URLs (comma-separated) |
+| `--header "Key: Value"` | Add custom header (repeatable) |
+
+### Pagination & Search
+
+| Flag | Description |
+|---|---|
+| `--paginate` | Auto-follow pagination |
+| `--max-pages N` | Max pages (default: 50) |
+| `--search QUERY` | Submit search query |
+
+### Crawl
+
+| Flag | Description |
+|---|---|
+| `--crawl` | Crawl entire website |
+
+### Downloads
+
+| Flag | Description |
+|---|---|
+| `--download` | Download linked files |
+| `--download-images` | Download all images |
+| `--download-dir DIR` | Download directory (default: downloads) |
+
+### Export
+
+| Flag | Description |
+|---|---|
+| `--export FORMAT` | `json`, `csv`, `excel`, `sqlite`, `text`, `markdown` |
+
+### Examples
 
 ```bash
-# Basic scrape
-intelliscrape https://example.com
+# Basic
+intelliscrape https://example.com -o output.txt
 
-# Save to file
-intelliscrape https://site.com --output result.txt
+# Structured data
+intelliscrape https://example.com --json
 
-# Get structured JSON
-intelliscrape https://site.com --structured --output data.json
+# Analyze protection
+intelliscrape https://amazon.com --analyze
 
-# Stealth mode for protected sites
-intelliscrape https://site.com --engine stealth
+# Free proxies
+intelliscrape https://amazon.com --use-free-proxies
 
-# With proxy
-intelliscrape https://site.com --proxy user:pass@proxy:8080
+# Login
+intelliscrape https://site.com --login --username user --password pass
 
-# Crawl entire site
-intelliscrape https://site.com --crawl --max-pages 100
+# Pagination
+intelliscrape https://example.com/products --paginate --max-pages 10
 
-# Check what anti-bot protection a site uses
-intelliscrape https://site.com --check-antibot
+# Crawl
+intelliscrape https://docs.python.org --crawl --max-pages 50
+
+# Export
+intelliscrape https://example.com --export csv -o data.csv
+
+# Manual CAPTCHA
+intelliscrape https://protected-site.com --manual-captcha
+
+# Force browser
+intelliscrape https://react-app.com --force-browser
+```
+
+---
+
+## Library API Reference
+
+### `scrape()` — Quick One-liner
+
+```python
+from intelliscrape import scrape
+
+text = scrape(url, **kwargs)
+```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `url` | str | required | Target URL |
+| `engine` | str | None | Force engine: `static`, `playwright_stealth`, `camoufox`, `nodriver` |
+| `extract` | bool | True | Extract text from HTML |
+| `clean` | bool | True | Clean extracted text |
+| `return_raw` | bool | False | Return raw HTML |
+| `return_structured` | bool | False | Return `StructuredData` |
+| `handle_consent` | bool | True | Handle cookie consent banners |
+| `force_browser` | bool | False | Force browser engine |
+
+---
+
+### `IntelliScrape` — Main Class
+
+#### Constructor
+
+```python
+from intelliscrape import IntelliScrape
+
+scraper = IntelliScrape(**kwargs)
+```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `proxy` | str, ProxyConfig, list | None | Single proxy or list |
+| `proxies` | list of str | None | Proxy strings |
+| `brightdata_key` | str | None | Bright Data API key |
+| `scraperapi_key` | str | None | ScraperAPI key |
+| `oxylabs_key` | str | None | Oxylabs API key |
+| `smartproxy_key` | str | None | Smartproxy API key |
+| `prefer_residential` | bool | True | Prefer residential proxies |
+| `use_free_proxies` | bool | True | Auto-find free proxies |
+| `api_key` | str | None | CAPTCHA solving API key |
+| `captcha_provider` | str | None | `2captcha` or `capsolver` |
+| `headless` | bool | True | Headless browser mode |
+| `simulate_behavior` | bool | True | Human-like behavior simulation |
+| `manual_captcha` | bool | False | Manual CAPTCHA solving mode |
+| `tls_profile` | str | `chrome131` | TLS fingerprint profile |
+| `session_profile` | str | None | Persistent session name |
+| `max_retries` | int | 3 | Max retry attempts |
+| `min_delay` | float | 0.5 | Min delay between requests |
+| `max_delay` | float | 3.0 | Max delay between requests |
+| `requests_per_minute` | int | None | Rate limit |
+| `intelligent` | bool | True | Enable intelligent mode |
+| `log_level` | str | `WARNING` | Logging level |
+
+#### Methods
+
+##### `scrape(url, **kwargs)`
+
+Scrape a URL and return text content.
+
+```python
+result = scraper.scrape(
+    url="https://example.com",
+    engine=None,
+    extract=True,
+    clean=True,
+    return_raw=False,
+    return_structured=False,
+    handle_consent=True,
+    force_browser=False,
+    intelligent=None,
+)
+```
+
+##### `get_structured(url, **kwargs)`
+
+Get structured data (title, description, meta tags, JSON-LD).
+
+```python
+data = scraper.get_structured("https://github.com")
+print(data.title)
+print(data.description)
+print(data.og_data)
+print(data.json_ld)
+```
+
+##### `analyze(url)`
+
+Analyze a site and return recommendations.
+
+```python
+analysis = scraper.analyze("https://amazon.com")
+print(analysis.site_type)           # "ecommerce"
+print(analysis.protection_level)    # "high"
+print(analysis.recommended_engine)  # "playwright_stealth"
+print(analysis.recommended_delay)   # 3.0
+```
+
+##### `scrape_many(urls, **kwargs)`
+
+Scrape multiple URLs with rate limiting.
+
+```python
+results = scraper.scrape_many([
+    "https://example.com/page1",
+    "https://example.com/page2",
+])
+# Returns: [{"url": ..., "content": ..., "success": ..., "error": ...}, ...]
+```
+
+##### `check_captcha(url)`
+
+Check if a URL has a CAPTCHA.
+
+```python
+captcha = scraper.check_captcha("https://site.com")
+if captcha:
+    print(captcha.captcha_type)  # CaptchaType.RECAPTCHA_V2
+    print(captcha.site_key)
+```
+
+##### `check_antibot(url)`
+
+Check anti-bot protection on a URL.
+
+```python
+info = scraper.check_antibot("https://site.com")
+if info:
+    print(info.vendor)       # AntiBotVendor.CLOUDFLARE
+    print(info.confidence)   # 0.95
+```
+
+##### `find_free_proxies(test=True)`
+
+Find and test free proxies.
+
+```python
+proxies = scraper.find_free_proxies(test=True)
+for p in proxies:
+    print(f"{p['url']} - speed: {p['speed']:.2f}s")
+```
+
+##### `get_proxy_status()`
+
+Get proxy manager status.
+
+```python
+status = scraper.get_proxy_status()
+print(status['user_proxies'])
+print(status['healthy_proxies'])
+```
+
+---
+
+### `crawl()` — Website Crawler
+
+```python
+from intelliscrape import crawl
+
+result = crawl(
+    url="https://docs.python.org",
+    max_pages=50,
+    delay=0.5,
+    on_page=None,  # Callback: on_page(done, failed)
+)
+```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `url` | str | required | Starting URL |
+| `max_pages` | int | 50 | Maximum pages to crawl |
+| `delay` | float | 0.5 | Delay between requests |
+| `on_page` | callable | None | Progress callback |
+
+Returns `CrawlResult`:
+- `result.pages` — list of `ScrapeResult` (url, content, status)
+- `result.failed` — list of failed pages
+- `result.total_pages` — total scraped
+- `result.total_failed` — total failed
+- `result.to_text()` — all content as single text string
+
+---
+
+### `AsyncIntelliScrape` — Async Scraping
+
+```python
+import asyncio
+from intelliscrape import AsyncIntelliScrape
+
+async def main():
+    async with AsyncIntelliScrape() as scraper:
+        urls = [
+            "https://example.com",
+            "https://python.org",
+            "https://github.com",
+        ]
+        results = await scraper.scrape_many(urls, max_concurrent=5)
+        for r in results:
+            print(f"{r['url']}: {len(r['content'])} chars")
+
+asyncio.run(main())
+```
+
+Standalone async functions:
+
+```python
+from intelliscrape import scrape_async, scrape_many_async
+
+result = await scrape_async("https://example.com")
+results = await scrape_many_async(urls, max_concurrent=10)
+```
+
+---
+
+### `DataExporter` — Export Formats
+
+```python
+from intelliscrape import DataExporter
+
+DataExporter.to_json(data, file="output.json")
+DataExporter.to_csv(data, file="output.csv")
+DataExporter.to_excel(data, file="output.xlsx")
+DataExporter.to_sqlite(data, file="output.db", table="scraped_data")
+DataExporter.to_text(data, file="output.txt")
+DataExporter.to_markdown(data, file="output.md")
+DataExporter.export(data, format="json", file="output.json")
+```
+
+---
+
+### `Downloader` — File Downloads
+
+```python
+from intelliscrape import Downloader
+
+downloader = Downloader()
+
+# Download linked files
+results = downloader.download_links(html, base_url, "downloads/")
+
+# Download all images
+results = downloader.download_images(html, base_url, "downloads/images/")
+```
+
+---
+
+### `Authenticator` — Login & Sessions
+
+```python
+from intelliscrape import Authenticator, LoginCredentials
+
+auth = Authenticator()
+credentials = LoginCredentials(
+    username="user@example.com",
+    password="secret",
+)
+success = auth.login("https://site.com/login", credentials)
+```
+
+---
+
+### `FormSubmitter` — Form Interaction
+
+```python
+from intelliscrape import FormSubmitter
+
+form_submitter = FormSubmitter()
+forms = form_submitter.find_forms(html, base_url="https://site.com")
+result_html = form_submitter.search(html, "query", base_url="https://site.com")
+```
+
+---
+
+### `Paginator` — Auto-pagination
+
+```python
+from intelliscrape import Paginator
+
+paginator = Paginator()
+next_url = paginator.find_next_page(html, current_url, current_page)
+```
+
+---
+
+### `RequestInterceptor` — Request/Response Modification
+
+```python
+from intelliscrape import RequestInterceptor
+
+interceptor = RequestInterceptor()
+interceptor.block_urls(["analytics", "tracking"])
+interceptor.modify_headers({"X-Custom": "value"})
+interceptor.add_response_handler(my_handler)
+```
+
+---
+
+### `CookieManager` — Cookie Persistence
+
+```python
+from intelliscrape import CookieManager
+
+cookie_mgr = CookieManager()
+cookie_mgr.save_cookies("https://site.com", {"session": "abc123"})
+cookies = cookie_mgr.load_cookies("https://site.com")
+```
+
+---
+
+### `CaptchaDetector` & `CaptchaSolver`
+
+```python
+from intelliscrape import CaptchaDetector, CaptchaSolver
+
+# Detect
+captcha = CaptchaDetector.detect(html, url="https://site.com")
+
+# Solve (requires API key)
+solver = CaptchaSolver(provider="capsolver", api_key="YOUR_KEY")
+token = solver.solve_recaptcha_v2(site_key, page_url)
+token = solver.solve_hcaptcha(site_key, page_url)
+token = solver.solve_turnstile(site_key, page_url)
+```
+
+---
+
+### `AntiBotDetector` — Anti-bot Vendor Detection
+
+```python
+from intelliscrape import AntiBotDetector
+
+info = AntiBotDetector.detect(html=html, headers=headers, cookies=cookies)
+if info:
+    print(info.vendor)       # AntiBotVendor.CLOUDFLARE
+    print(info.confidence)   # 0.95
+```
+
+---
+
+### Anti-bot Bypass Classes
+
+```python
+from intelliscrape import (
+    CloudflareTurnstileBypass,
+    DataDomeBypass,
+    PerimeterXBypass,
+    AkamaiBypass,
+)
+```
+
+Each bypass class provides detection, recommended settings, and automated token solving where possible.
+
+---
+
+## Engine System
+
+IntelliScrape uses a **4-tier engine escalation** system. It tries the cheapest, fastest method first and escalates only when needed.
+
+```
+Tier 1: Static (curl_cffi)        → Sub-second, TLS impersonation
+    ↓ if JS-only content
+Tier 2: Playwright Stealth         → 2-5s, headless Chromium + patches
+    ↓ if still blocked
+Tier 3: Camoufox                   → 3-8s, custom Firefox (C++ patches)
+    ↓ if still blocked
+Tier 4: nodriver                   → 5-15s, raw CDP, no WebDriver traces
+```
+
+| Tier | Engine | Speed | Stealth | Best For |
+|---|---|---|---|---|
+| 1 | `static` | Sub-second | Low | Static sites, APIs |
+| 2 | `playwright_stealth` | 2-5s | Medium | JS-heavy sites, basic bot detection |
+| 3 | `camoufox` | 3-8s | High | Protected sites, fingerprint detection |
+| 4 | `nodriver` | 5-15s | Maximum | DataDome, PerimeterX, Akamai |
+
+```python
+# Auto-detect (default)
+text = scraper.scrape("https://site.com")
+
+# Force specific engine
+text = scraper.scrape("https://site.com", engine="playwright_stealth")
+
+# Force browser for known JS-heavy sites
+text = scraper.scrape("https://react-app.com", force_browser=True)
+```
+
+---
+
+## Intelligent Mode
+
+Enabled by default (`intelligent=True`). Before scraping, IntelliScrape analyzes the URL to determine:
+
+- **Site type** — ecommerce, social, news, tech, education, etc.
+- **Protection level** — none, basic, moderate, high, extreme
+- **Recommended engine** — which tier to start with
+- **Recommended delay** — slower for protected sites
+- **Residential proxy needed** — auto-selects proxy type
+
+```python
+analysis = scraper.analyze("https://amazon.com")
+print(analysis.site_type.value)         # "ecommerce"
+print(analysis.protection_level.value)  # "high"
+print(analysis.recommended_engine)      # "playwright_stealth"
+print(analysis.requires_residential_proxy)  # True
 ```
 
 ---
 
 ## Features
 
-| Feature | Status |
+### Anti-Detection
+
+| Feature | Description |
 |---|---|
-| Automatic static/dynamic detection | ✅ |
-| TLS fingerprint impersonation | ✅ |
-| Browser fingerprint randomization | ✅ |
-| Human-like behavioral simulation | ✅ |
-| Proxy rotation | ✅ |
-| CAPTCHA detection & solving | ✅ |
-| Smart retry with backoff | ✅ |
-| Rate limiting | ✅ |
-| Anti-bot vendor detection | ✅ |
-| Cookie consent handling | ✅ |
-| Structured data extraction | ✅ |
-| Session persistence | ✅ |
-| Multiple export formats | ✅ |
-| Async support | ✅ |
+| TLS Fingerprinting | Impersonates Chrome, Firefox, Safari (JA3/JA4) |
+| Header Rotation | Randomizes HTTP headers |
+| Browser Fingerprinting | Randomizes viewport, timezone, WebGL, canvas |
+| Human Simulation | Bezier mouse paths, natural scrolls, realistic delays |
+| Cookie Consent | Auto-handles consent banners |
+| Rate Limiting | Smart delays based on site protection |
+| Retry with Backoff | Exponential backoff on failures |
 
----
+### CAPTCHA Solving
 
-## How It Works
-
-```
-scrape(url)
-    ↓
-┌─────────────────────────────┐
-│   Engine Selection (auto)   │
-│  ┌─────────┐ ┌───────────┐  │
-│  │ Static  │ │ Stealth   │  │
-│  │curl_cffi│ │Playwright │  │
-│  └─────────┘ └───────────┘  │
-└─────────────────────────────┘
-    ↓
-┌─────────────────────────────┐
-│    Anti-Detection Layer     │
-│  • TLS impersonation        │
-│  • Header rotation          │
-│  • Fingerprint randomize    │
-│  • Behavioral simulation    │
-└─────────────────────────────┘
-    ↓
-┌─────────────────────────────┐
-│      Smart Pipeline         │
-│  • Retry with backoff       │
-│  • Rate limiting            │
-│  • Anti-bot detection       │
-│  • Cookie consent           │
-└─────────────────────────────┘
-    ↓
-┌─────────────────────────────┐
-│      Content Extraction     │
-│  • Text extraction          │
-│  • Structured data (JSON)   │
-│  • Clean output             │
-└─────────────────────────────┘
-    ↓
-  Clean Text / JSON
-```
-
----
-
-## What Sites Can It Scrape?
-
-### Works Great ✅
-- Wikipedia, Python.org, MDN
-- GitHub, GitLab, Bitbucket
-- Hacker News, Reddit (most pages)
-- News sites (BBC, CNN, Reuters)
-- Documentation sites
-- Blogs (WordPress, Ghost, Hugo)
-- E-commerce (basic)
-
-### Works with Stealth Mode 🛡️
-- Cloudflare-protected sites
-- Sites with bot detection
-- JavaScript-heavy SPAs
-- Dynamic content sites
-
-### Needs Proxy + CAPTCHA Solver 🔐
-- LinkedIn
-- Amazon
-- Twitter/X
-- Instagram
-- Highly protected platforms
-
----
-
-## Engine Selection — 4-Tier Escalation
-
-IntelliScrape runs a tiered engine. It attempts the cheapest, fastest method first and escalates only when a target pushes back — so 70% of requests never leave tier 1, and hardcases still land.
-
-| Tier | Engine | When to Use | Dependencies |
-|---|---|---|---|
-| **Tier 1** | `curl_cffi` | Default. TLS impersonation, static requests. Sub-second. | `curl_cffi` |
-| **Tier 2** | `playwright-stealth` | JS-heavy pages, basic bot detection. Headless browser with patched fingerprints. | `playwright` |
-| **Tier 3** | `nodriver` | Protected sites, DataDome/PerimeterX. Raw CDP with no webdriver traces. | `nodriver` |
-| **Tier 4** | `camoufox` | Maximum stealth. Full fingerprint rewrite — canvas, WebGL, audio, fonts. | `camoufox` |
+**Automated** (requires API key):
 
 ```python
-# Force a specific engine
-scraper = IntelliScrape()
-text = scraper.scrape("https://site.com", engine="playwright_stealth")
-
-# Auto-detect best engine (default)
-text = scraper.scrape("https://amazon.com")
+scraper = IntelliScrape(api_key="YOUR_KEY", captcha_provider="capsolver")
+result = scraper.scrape("https://protected-site.com")
 ```
 
----
+| CAPTCHA Type | 2Captcha | CapSolver |
+|---|---|---|
+| reCAPTCHA v2 | Yes | Yes |
+| reCAPTCHA v3 | No | Yes |
+| hCaptcha | Yes | Yes |
+| Cloudflare Turnstile | No | Yes |
 
-## For Data Analysts
-
-IntelliScrape is built with data workflows in mind:
+**Manual** (opens visible browser):
 
 ```python
-from intelliscrape import IntelliScrape
-import json
-
-scraper = IntelliScrape()
-
-# Scrape multiple pages
-urls = [
-    "https://example.com/page1",
-    "https://example.com/page2",
-    "https://example.com/page3",
-]
-
-results = scraper.scrape_many(urls)
-
-# Save as JSON
-with open("data.json", "w") as f:
-    json.dump(results, f, indent=2)
-
-# Get structured data for analysis
-for url in urls:
-    data = scraper.get_structured(url)
-    print(f"{data.title} | {data.author} | {data.date_published}")
+scraper = IntelliScrape(manual_captcha=True)
+result = scraper.scrape("https://site-with-captcha.com")
+# Browser opens → solve CAPTCHA → press Enter in terminal
 ```
-
-### Export to different formats
 
 ```bash
-# JSON
-intelliscrape https://site.com --structured --output data.json
+intelliscrape https://site.com --manual-captcha
+```
 
-# Text
-intelliscrape https://site.com --output content.txt
+### Proxy Configuration
 
-# Crawl and save
-intelliscrape https://docs.python.org --crawl --max-pages 50 --output docs.txt
+```python
+# Single proxy
+scraper = IntelliScrape(proxy="user:pass@proxy:8080")
+
+# Multiple proxies
+scraper = IntelliScrape(proxies=["proxy1:8080", "proxy2:8080"])
+
+# Residential proxy
+scraper = IntelliScrape(brightdata_key="YOUR_KEY")
+
+# Free proxies (automatic)
+scraper = IntelliScrape(use_free_proxies=True)
+```
+
+### Export Formats
+
+```python
+from intelliscrape import DataExporter
+
+DataExporter.to_json(data, file="output.json")
+DataExporter.to_csv(data, file="output.csv")
+DataExporter.to_excel(data, file="output.xlsx")
+DataExporter.to_sqlite(data, file="output.db")
+DataExporter.to_markdown(data, file="output.md")
+```
+
+```bash
+intelliscrape https://site.com --export csv -o data.csv
+intelliscrape https://site.com --export json -o data.json
 ```
 
 ---
 
-## Advanced Configuration
+## Examples
+
+### Scrape React/Vue/Angular SPAs
 
 ```python
-from intelliscrape import IntelliScrape
+result = scraper.scrape("https://react-app.com", force_browser=True)
+```
 
-scraper = IntelliScrape(
-    # Proxy
-    proxy="user:pass@proxy:8080",
-    
-    # CAPTCHA solving
-    api_key="your_2captcha_or_capsolver_key",
-    captcha_provider="capsolver",
-    
-    # Browser settings
-    headless=True,
-    simulate_behavior=True,
-    
-    # Rate limiting
-    min_delay=0.5,
-    max_delay=3.0,
-    requests_per_minute=30,
-    
-    # TLS fingerprint
-    tls_profile="chrome131",
-    
-    # Session persistence
-    session_profile="my_session",
-    
-    # Logging
-    log_level="INFO",
+### Scrape with Custom Headers
+
+```python
+result = scraper.scrape(
+    "https://api.example.com/data",
+    headers={"Authorization": "Bearer token123"},
 )
 ```
+
+### Persistent Sessions
+
+```python
+scraper = IntelliScrape(session_profile="my_session")
+scraper.scrape("https://site.com")       # Creates session
+scraper.scrape("https://site.com/dashboard")  # Reuses session
+```
+
+### Download Files
+
+```python
+from intelliscrape import Downloader
+
+downloader = Downloader()
+html = scraper.scrape("https://example.com/downloads", return_raw=True)
+results = downloader.download_links(html, "https://example.com", "downloads/")
+```
+
+### Batch Scraping with Export
+
+```python
+from intelliscrape import IntelliScrape, DataExporter
+
+scraper = IntelliScrape()
+urls = [f"https://example.com/page/{i}" for i in range(100)]
+
+results = scraper.scrape_many(urls)
+DataExporter.to_csv(
+    [{"url": r["url"], "content": r["content"], "success": r["success"]} for r in results],
+    file="results.csv",
+)
+```
+
+---
+
+## Troubleshooting
+
+| Problem | Solution |
+|---|---|
+| Returns empty or widget text | Use `force_browser=True` — site is a JS SPA |
+| CAPTCHA blocking | Use `manual_captcha=True` or `api_key` + `captcha_provider` |
+| Blocked by anti-bot | Try `engine="camoufox"` + residential proxy |
+| Playwright not installed | `pip install playwright && playwright install chromium` |
+| Camoufox not installed | `pip install camoufox && camoufox install` |
+| nodriver not installed | `pip install nodriver` |
 
 ---
 
@@ -325,80 +801,83 @@ scraper = IntelliScrape(
 
 ```
 intelliscrape/
-├── core.py                  # Main API
-├── cli.py                   # Command line
-├── engines/
-│   ├── static.py            # curl_cffi (TLS bypass)
-│   ├── playwright_stealth.py # Playwright + patches
-│   └── stealth.py           # nodriver (advanced)
-├── anti_detection/
-│   ├── headers.py           # Header rotation
-│   ├── tls.py               # TLS profiles
-│   ├── fingerprint.py       # Browser fingerprinting
-│   ├── behavior.py          # Human simulation
-│   ├── antibot.py           # Vendor detection
-│   ├── throttle.py          # Retry & rate limit
-│   └── consent.py           # Cookie consent
-├── challenges/
-│   └── captcha.py           # CAPTCHA solving
-├── proxy/
-│   └── __init__.py          # Proxy management
-├── session/
-│   └── __init__.py          # Session persistence
-├── extractor/
-│   ├── __init__.py          # Text extraction
-│   └── structured.py        # JSON-LD, meta tags
-├── exporters/
-│   └── __init__.py          # TXT, JSON, CSV, MD
-├── crawler.py               # Website crawler
-├── parser.py                # HTML parser
-├── cleaner.py               # Text cleaning
-└── utils.py                 # Utilities
+    __init__.py             # Public API exports
+    __main__.py             # python -m intelliscrape
+    core.py                 # IntelliScrape class (main orchestrator)
+    cli.py                  # CLI (argparse + rich)
+    async_scraper.py        # AsyncIntelliScrape
+    intelligent.py          # SiteAnalyzer, SmartRateLimiter
+    auth.py                 # Authenticator, LoginCredentials
+    forms.py                # FormSubmitter
+    pagination.py           # Paginator
+    export.py               # DataExporter
+    downloader.py           # Downloader
+    cookies.py              # CookieManager
+    crawler.py              # crawl(), CrawlResult
+    interceptor.py          # RequestInterceptor
+    parser.py               # HTML DOM builder
+    cleaner.py              # Text cleaning
+    utils.py                # HTML analysis
+    exceptions.py           # Exceptions
+    retry.py                # SmartRetry
+    ip_manager.py           # IPManager, NaturalRotator
+
+    engines/                # 4-tier scraping engines
+        base.py             # BaseEngine, ScrapeResult
+        static.py           # curl_cffi (Tier 1)
+        playwright_stealth.py  # Playwright (Tier 2)
+        camoufox.py         # Camoufox (Tier 3)
+        stealth.py          # nodriver (Tier 4)
+
+    anti_detection/         # Anti-detection subsystem
+        antibot.py          # AntiBotDetector
+        behavior.py         # HumanBehavior
+        bypass.py           # Vendor-specific bypasses
+        consent.py          # CookieConsentHandler
+        fingerprint.py      # FingerprintGenerator
+        headers.py          # HeaderManager
+        throttle.py         # SmartThrottle, RateLimiter
+        tls.py              # TLSConfig (JA3/JA4)
+
+    challenges/             # Challenge handling
+        captcha.py          # CaptchaDetector, CaptchaSolver
+
+    extractor/              # Content extraction
+        structured.py       # StructuredExtractor, StructuredData
+
+    proxy/                  # Proxy management
+        __init__.py         # ProxyConfig, ProxyManager
+        free_finder.py      # FreeProxyFinder
+        manager.py          # IntelligentProxyManager
+        providers.py        # BrightData, ScraperAPI, etc.
+
+    session/                # Session persistence
+        __init__.py         # SessionManager
 ```
 
 ---
 
 ## Contributing
 
-We welcome contributions! Whether it's:
-- New anti-bot bypass patterns
-- CAPTCHA solving techniques
-- Proxy provider integrations
-- Bug fixes
-- Documentation
+We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Check out [CONTRIBUTING.md](CONTRIBUTING.md) to get started.
-
----
-
-## Community
-
-- **GitHub Issues:** [Report bugs](https://github.com/GuixJoy/IntelliScrape/issues)
-- **Discussions:** [Ask questions](https://github.com/GuixJoy/IntelliScrape/discussions)
+```bash
+git clone https://github.com/GuixJoy/IntelliScrape.git
+cd IntelliScrape/IntelliScrape_library
+pip install -e ".[dev]"
+pytest
+```
 
 ---
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+MIT License — see [LICENSE](LICENSE).
 
 ---
 
-**Built with ❤️ for the data community.**
+<div align="center">
 
----
+**[PyPI](https://pypi.org/project/intelliscrape/)** · **[GitHub](https://github.com/GuixJoy/IntelliScrape)** · **[Report Issues](https://github.com/GuixJoy/IntelliScrape/issues)**
 
-## Generating the Demo GIF
-
-To regenerate the demo GIF:
-
-```bash
-# Install vhs (macOS)
-brew install charmbracelet/tap/vhs
-
-# Or using Go
-go install github.com/charmbracelet/vhs@latest
-
-# Generate the GIF
-vhs demo.tape
-```
+</div>

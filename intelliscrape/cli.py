@@ -97,6 +97,9 @@ Examples:
   
   # With residential proxy (for better quality)
   intelliscrape https://amazon.com --brightdata-key YOUR_KEY
+  
+  # Manual CAPTCHA solving (opens visible browser when CAPTCHA detected)
+  intelliscrape https://site-with-captcha.com --manual-captcha
         """,
     )
 
@@ -159,6 +162,10 @@ Examples:
     # Force browser
     parser.add_argument("--force-browser", action="store_true", help="Force browser engine")
 
+    # Manual CAPTCHA
+    parser.add_argument("--manual-captcha", action="store_true",
+                       help="When a CAPTCHA is detected, open a visible browser and wait for you to solve it")
+
     args = parser.parse_args(argv)
 
     # Handle commands that don't require URL
@@ -209,6 +216,7 @@ def _create_scraper(args) -> IntelliScrape:
         smartproxy_key=args.smartproxy_key,
         intelligent=not args.no_intelligent,
         use_free_proxies=not args.no_free_proxies,
+        manual_captcha=args.manual_captcha,
     )
 
     # Apply headers to all engines
