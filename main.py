@@ -4,6 +4,8 @@ This is a standalone web backend - it does NOT depend on the intelliscrape
 Python library. It uses curl_cffi and playwright directly for scraping.
 """
 
+from __future__ import annotations
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -13,13 +15,6 @@ import logging
 import json
 import os
 from bs4 import BeautifulSoup
-
-try:
-    from intelliscrape.tech import TechStackExtractor
-    TECH_AVAILABLE = True
-except ImportError:
-    TechStackExtractor = None
-    TECH_AVAILABLE = False
 
 try:
     from curl_cffi import requests as curl_requests
@@ -523,9 +518,14 @@ def detect_tech(req: TechRequest):
     url_str = str(req.url)
     logger.info(f"Tech detection request: {url_str}")
     try:
-        if not TECH_AVAILABLE:
-            raise Exception("intelliscrape.tech module not installed - pip install intelliscrape")
+        from intelliscrape.tech import TechStackExtractor
+    except ImportError:
+        raise HTTPException(
+            status_code=501,
+            detail="intelliscrape.tech module not installed. Run: pip install intelliscrape",
+        )
 
+    try:
         html, headers = fetch_raw(url_str, render_js=req.render)
         if not html:
             raise Exception("Empty response from target website")
@@ -551,6 +551,8 @@ def detect_tech(req: TechRequest):
             tech=tech.to_dict(),
             server_headers=interesting_headers,
         )
+    except HTTPException:
+        raise
     except Exception as e:
         error_msg = str(e)
         logger.error(f"Tech detection failed: {url_str} -> {error_msg}")
