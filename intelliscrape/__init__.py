@@ -111,7 +111,7 @@ from .link_checker import (
 )
 from .tech.extractor import TechStack, TechInfo, TechStackExtractor
 
-__version__ = "2.5.1"
+__version__ = "2.6.0"
 
 __all__ = [
     # Main API
