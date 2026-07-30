@@ -163,6 +163,10 @@ Examples:
     parser.add_argument("--tech", action="store_true",
                        help="Detect website technology stack (frameworks, CMS, analytics, CDN, etc.)")
 
+    # API detection
+    parser.add_argument("--detect-api", action="store_true",
+                       help="Detect API endpoints, third-party services, and exposed keys")
+
     # Downloads
     parser.add_argument("--download", action="store_true", help="Download linked files")
     parser.add_argument("--download-images", action="store_true", help="Download all images")
@@ -193,6 +197,8 @@ Examples:
             return _check_links_cmd(args)
         elif args.tech:
             return _tech_report(args)
+        elif args.detect_api:
+            return _detect_api_report(args)
         elif args.crawl:
             return _crawl(args)
         elif args.paginate:
@@ -726,6 +732,101 @@ def _search(args) -> int:
             print(content)
     else:
         console.print("[yellow]No search form found[/yellow]")
+
+    return 0
+
+
+def _detect_api_report(args) -> int:
+    """Detect and display API endpoints, third-party services, and key exposures."""
+    scraper = _create_scraper(args)
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task(f"Scanning {args.url} for APIs...", total=None)
+
+        report = scraper.detect_apis(args.url, force_browser=args.force_browser)
+
+        progress.update(task, completed=True)
+
+    # --- Summary panel ---
+    summary = report.summary
+    console.print()
+    console.print(Panel(
+        f"[bold]URL:[/bold] {report.url}\n"
+        f"[bold]Endpoints:[/bold] {len(report.endpoints)}\n"
+        f"[bold]Third-party services:[/bold] {len(report.third_party_apis)}\n"
+        f"[bold]Documentation found:[/bold] {len(report.documentation)}\n"
+        f"[bold]Key exposures:[/bold] {len(report.key_exposures)}",
+        title="API Detection Report",
+        border_style="blue",
+    ))
+
+    # --- Endpoints table ---
+    if report.endpoints:
+        table = Table(title="API Endpoints", show_header=True)
+        table.add_column("URL", style="cyan", max_width=60)
+        table.add_column("Method", style="green")
+        table.add_column("Category", style="yellow")
+        table.add_column("Source", style="dim")
+        table.add_column("Confidence", justify="right", style="green")
+        for ep in report.endpoints:
+            table.add_row(
+                ep.url,
+                ep.method,
+                ep.category,
+                ep.source,
+                f"{ep.confidence:.0%}",
+            )
+        console.print(table)
+
+    # --- Third-party services ---
+    if report.third_party_apis:
+        console.print()
+        console.print("[bold]Third-party API services detected:[/bold]")
+        for svc in report.third_party_apis:
+            console.print(f"  • {svc}")
+
+    # --- Documentation ---
+    if report.documentation:
+        console.print()
+        console.print("[bold]API documentation endpoints:[/bold]")
+        for doc in report.documentation:
+            console.print(f"  • {doc}")
+
+    # --- Key exposures ---
+    if report.key_exposures:
+        console.print()
+        ktable = Table(title="API Key / Credential Exposures", show_header=True)
+        ktable.add_column("Provider", style="red")
+        ktable.add_column("Type", style="yellow")
+        ktable.add_column("Severity", style="bold red")
+        ktable.add_column("Evidence (redacted)", style="dim")
+        for key in report.key_exposures:
+            severity_color = {"high": "bold red", "medium": "yellow", "low": "dim"}.get(key.severity, "white")
+            ktable.add_row(
+                key.provider,
+                key.key_type,
+                f"[{severity_color}]{key.severity.upper()}[/{severity_color}]",
+                key.evidence,
+            )
+        console.print(ktable)
+
+    if report.total == 0:
+        console.print("[yellow]No API endpoints or services detected.[/yellow]")
+
+    # --- Export ---
+    if args.export:
+        return _export_content(report.to_dict(), args.export, args.output, args.url)
+
+    if args.output:
+        import json as _json
+        with open(args.output, "w", encoding="utf-8") as f:
+            _json.dump(report.to_dict(), f, indent=2, ensure_ascii=False)
+        console.print(f"[green]Saved API report to {args.output}[/green]")
 
     return 0
 

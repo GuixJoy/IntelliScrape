@@ -110,8 +110,9 @@ from .link_checker import (
     LinkType,
 )
 from .tech.extractor import TechStack, TechInfo, TechStackExtractor
+from .api_detector.extractor import ApiReport, ApiEndpoint, ApiKeyExposure, ApiDetector
 
-__version__ = "2.6.0"
+__version__ = "2.7.0"
 
 __all__ = [
     # Main API
@@ -203,6 +204,11 @@ __all__ = [
     "TechStack",
     "TechInfo",
     "TechStackExtractor",
+    # API Detection
+    "ApiReport",
+    "ApiEndpoint",
+    "ApiKeyExposure",
+    "ApiDetector",
     # Re-exports
     "ScrapeResult",
 ]

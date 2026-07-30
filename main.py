@@ -33,7 +33,7 @@ except ImportError:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-WEB_VERSION = "2.6.0"
+WEB_VERSION = "2.7.0"
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 if DATABASE_URL and "channel_binding=require" in DATABASE_URL:
@@ -474,6 +474,7 @@ def root():
         "endpoints": {
             "scrape": "POST /scrape",
             "tech": "POST /tech",
+            "detect_api": "POST /detect-api",
             "health": "GET /health",
             "version": "GET /version",
         },
@@ -556,6 +557,62 @@ def detect_tech(req: TechRequest):
     except Exception as e:
         error_msg = str(e)
         logger.error(f"Tech detection failed: {url_str} -> {error_msg}")
+        raise HTTPException(status_code=400, detail=error_msg)
+
+
+class DetectApiRequest(BaseModel):
+    url: HttpUrl
+    render: bool = False
+
+
+class DetectApiResponse(BaseModel):
+    url: str
+    endpoints: list = []
+    key_exposures: list = []
+    third_party_apis: list = []
+    documentation: list = []
+    summary: dict = {}
+    success: bool = True
+
+
+@app.post("/detect-api")
+def detect_api(req: DetectApiRequest):
+    """Detect API endpoints, third-party services, and exposed keys."""
+    url_str = str(req.url)
+    logger.info(f"API detection request: {url_str}")
+    try:
+        from intelliscrape.api_detector import ApiDetector
+    except ImportError:
+        raise HTTPException(
+            status_code=501,
+            detail="intelliscrape.api_detector module not installed. Run: pip install intelliscrape",
+        )
+
+    try:
+        html, headers = fetch_raw(url_str, render_js=req.render)
+        if not html:
+            raise Exception("Empty response from target website")
+
+        report = ApiDetector.extract(
+            html=html,
+            headers=headers,
+            url=url_str,
+        )
+
+        logger.info(f"API detection success: {url_str} ({len(report.endpoints)} endpoints, {len(report.third_party_apis)} services)")
+        return DetectApiResponse(
+            url=url_str,
+            endpoints=[ep.to_dict() for ep in report.endpoints],
+            key_exposures=[k.to_dict() for k in report.key_exposures],
+            third_party_apis=report.third_party_apis,
+            documentation=report.documentation,
+            summary=report.summary,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"API detection failed: {url_str} -> {error_msg}")
         raise HTTPException(status_code=400, detail=error_msg)
 
 

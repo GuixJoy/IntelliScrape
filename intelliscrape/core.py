@@ -37,6 +37,7 @@ from .session import SessionManager
 from .downloader import TimeoutType
 from .link_checker import LinkCheckReport, check_links as _check_links
 from .tech.extractor import TechStack, TechStackExtractor
+from .api_detector.extractor import ApiReport, ApiDetector
 from .utils import force_dynamic, html_needs_browser
 
 
@@ -677,6 +678,39 @@ class IntelliScrape:
             html=result.html,
             headers=result.headers,
             cookies=result.cookies,
+            url=url,
+        )
+
+    def detect_apis(
+        self,
+        url: str,
+        *,
+        force_browser: bool = False,
+        engine: Optional[str] = None,
+    ) -> ApiReport:
+        """Detect API endpoints, third-party services, and key exposures.
+
+        Parameters
+        ----------
+        url : str
+            Target URL.
+        force_browser : bool
+            Force browser engine for JS-heavy sites.
+        engine : str, optional
+            Force a specific engine.
+
+        Returns
+        -------
+        ApiReport
+            Detected REST/GraphQL/WebSocket endpoints, API documentation,
+            third-party services, and exposed API keys.
+        """
+        result = self._fetch(url, engine=engine, force_browser=force_browser)
+        if not result.success:
+            raise IntelliScrapeError(f"Failed to fetch {url}: {result.error}")
+        return ApiDetector.extract(
+            html=result.html,
+            headers=result.headers,
             url=url,
         )
 

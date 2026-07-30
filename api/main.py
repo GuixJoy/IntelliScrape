@@ -69,6 +69,20 @@ class TechResponse(BaseModel):
     success: bool = True
 
 
+class DetectApiRequest(BaseModel):
+    url: HttpUrl
+
+
+class DetectApiResponse(BaseModel):
+    url: str
+    endpoints: list = []
+    key_exposures: list = []
+    third_party_apis: list = []
+    documentation: list = []
+    summary: dict = {}
+    success: bool = True
+
+
 @app.get("/")
 def root():
     return {
@@ -78,6 +92,7 @@ def root():
             "scrape": "POST /scrape",
             "structured": "POST /structured",
             "tech": "POST /tech",
+            "detect_api": "POST /detect-api",
             "crawl": "POST /crawl",
         }
     }
@@ -127,6 +142,24 @@ def detect_tech(req: TechRequest):
                     "cf-ray", "x-shopify-stage",
                 )
             },
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/detect-api")
+def detect_api(req: DetectApiRequest):
+    """Detect API endpoints, third-party services, and exposed keys."""
+    try:
+        scraper = IntelliScrape()
+        report = scraper.detect_apis(str(req.url))
+        return DetectApiResponse(
+            url=str(req.url),
+            endpoints=[ep.to_dict() for ep in report.endpoints],
+            key_exposures=[k.to_dict() for k in report.key_exposures],
+            third_party_apis=report.third_party_apis,
+            documentation=report.documentation,
+            summary=report.summary,
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
