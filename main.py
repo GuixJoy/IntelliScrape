@@ -1,13 +1,25 @@
-"""FastAPI backend for IntelliScrape."""
+"""FastAPI backend for IntelliScrape web service.
+
+This is a standalone web backend - it does NOT depend on the intelliscrape
+Python library. It uses curl_cffi and playwright directly for scraping.
+"""
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, HttpUrl
 from typing import Optional
 import logging
 import json
 import os
 from bs4 import BeautifulSoup
+
+try:
+    from intelliscrape.tech import TechStackExtractor
+    TECH_AVAILABLE = True
+except ImportError:
+    TechStackExtractor = None
+    TECH_AVAILABLE = False
 
 try:
     from curl_cffi import requests as curl_requests
@@ -26,27 +38,30 @@ except ImportError:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+WEB_VERSION = "2.6.0"
+
 DATABASE_URL = os.environ.get("DATABASE_URL")
 if DATABASE_URL and "channel_binding=require" in DATABASE_URL:
     DATABASE_URL = DATABASE_URL.replace("&channel_binding=require", "").replace("?channel_binding=require", "")
-    logger.info("Stripped channel_binding=require from DATABASE_URL (psycopg2 incompatible)")
+    logger.info("Stripped channel_binding=require from DATABASE_URL")
+
 
 def get_db():
     return psycopg.connect(DATABASE_URL, autocommit=True)
 
+
 def init_db():
     if not DATABASE_URL or not DB_AVAILABLE:
         if not DB_AVAILABLE:
-            logger.warning("psycopg not available — scrape logging disabled")
+            logger.warning("psycopg not available - scrape logging disabled")
         else:
-            logger.warning("DATABASE_URL not set — scrape logging disabled")
+            logger.warning("DATABASE_URL not set - scrape logging disabled")
         return
     try:
         logger.info(f"Connecting to Neon DB (url prefix: {DATABASE_URL[:30]}...)")
         conn = get_db()
         logger.info("Neon DB connection successful")
         with conn.cursor() as cur:
-            # Check if old schema exists (has 'fingerprint' column)
             cur.execute("""
                 SELECT EXISTS (
                     SELECT 1 FROM information_schema.columns
@@ -56,7 +71,6 @@ def init_db():
             has_old_col = cur.fetchone()[0]
 
             if has_old_col:
-                # Drop old table and recreate with new schema
                 cur.execute("DROP TABLE IF EXISTS scrapes CASCADE")
                 logger.info("Dropped old scrapes table for schema migration")
 
@@ -66,46 +80,28 @@ def init_db():
                     url TEXT NOT NULL,
                     content_preview TEXT,
                     created_at TIMESTAMPTZ DEFAULT NOW(),
-
-                    -- top-level
                     fp_hash TEXT,
                     confidence_score DOUBLE PRECISION,
-
-                    -- incognito
                     incognito BOOLEAN,
                     incognito_browser TEXT,
-
-                    -- bot detection
                     is_bot BOOLEAN,
                     bot_signals JSONB,
                     bot_confidence DOUBLE PRECISION,
-
-                    -- browser
                     browser_name TEXT,
                     browser_version TEXT,
                     user_agent TEXT,
                     platform TEXT,
-
-                    -- display
                     screen_width INT,
                     screen_height INT,
                     color_depth INT,
                     color_gamut TEXT,
-
-                    -- hardware
                     hardware_concurrency INT,
                     device_memory INT,
-
-                    -- os
                     os_name TEXT,
                     os_version TEXT,
-
-                    -- storage
                     local_storage BOOLEAN,
                     session_storage BOOLEAN,
                     indexed_db BOOLEAN,
-
-                    -- media
                     audio DOUBLE PRECISION,
                     webgl_vendor TEXT,
                     webgl_renderer TEXT,
@@ -113,34 +109,20 @@ def init_db():
                     canvas_winding BOOLEAN,
                     canvas_geometry TEXT,
                     canvas_text TEXT,
-
-                    -- plugins & languages
                     plugins JSONB,
                     languages JSONB,
                     cookies_enabled BOOLEAN,
                     do_not_track TEXT,
-
-                    -- timezone & touch
                     timezone TEXT,
                     touch_max_points INT,
                     touch_event BOOLEAN,
                     touch_start BOOLEAN,
-
-                    -- vendor
                     vendor TEXT,
                     vendor_flavors JSONB,
-
-                    -- math & fonts
                     math_constants JSONB,
                     detected_fonts JSONB,
-
-                    -- device type
                     device_type JSONB,
-
-                    -- enhanced fingerprint
                     enhanced JSONB,
-
-                    -- geolocation
                     ip_address TEXT,
                     ipv4 TEXT,
                     ipv6 TEXT,
@@ -163,23 +145,26 @@ def init_db():
                 )
             """)
         conn.close()
-        logger.info("Database initialized — scrapes table ready")
+        logger.info("Database initialized - scrapes table ready")
     except Exception as e:
         logger.error(f"Database init failed: {e}")
+
 
 app = FastAPI(
     title="IntelliScrape API",
     description="Scrape any website with anti-detection capabilities",
-    version="2.5.0",
+    version=WEB_VERSION,
 )
 
+ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "https://intelliscrape.dev,https://www.intelliscrape.dev,http://localhost:5173,http://localhost:3000").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 @app.on_event("startup")
 def startup():
@@ -199,110 +184,25 @@ class ScrapeResponse(BaseModel):
     success: bool = True
 
 
-class ScrapeLog(BaseModel):
-    id: int
+class TechRequest(BaseModel):
+    url: HttpUrl
+    render: bool = False
+
+
+class TechResponse(BaseModel):
     url: str
-    content_preview: Optional[str]
-    created_at: str
-    # fingerprint - top level
-    fp_hash: Optional[str] = None
-    confidence_score: Optional[float] = None
-    # incognito
-    incognito: Optional[bool] = None
-    incognito_browser: Optional[str] = None
-    # bot
-    is_bot: Optional[bool] = None
-    bot_signals: Optional[list] = None
-    bot_confidence: Optional[float] = None
-    # browser
-    browser_name: Optional[str] = None
-    browser_version: Optional[str] = None
-    user_agent: Optional[str] = None
-    platform: Optional[str] = None
-    # display
-    screen_width: Optional[int] = None
-    screen_height: Optional[int] = None
-    color_depth: Optional[int] = None
-    color_gamut: Optional[str] = None
-    # hardware
-    hardware_concurrency: Optional[int] = None
-    device_memory: Optional[int] = None
-    # os
-    os_name: Optional[str] = None
-    os_version: Optional[str] = None
-    # storage
-    local_storage: Optional[bool] = None
-    session_storage: Optional[bool] = None
-    indexed_db: Optional[bool] = None
-    # media
-    audio: Optional[float] = None
-    webgl_vendor: Optional[str] = None
-    webgl_renderer: Optional[str] = None
-    webgl_image_hash: Optional[str] = None
-    canvas_winding: Optional[bool] = None
-    canvas_geometry: Optional[str] = None
-    canvas_text: Optional[str] = None
-    # plugins & languages
-    plugins: Optional[list] = None
-    languages: Optional[list] = None
-    cookies_enabled: Optional[bool] = None
-    do_not_track: Optional[str] = None
-    # timezone & touch
-    timezone: Optional[str] = None
-    touch_max_points: Optional[int] = None
-    touch_event: Optional[bool] = None
-    touch_start: Optional[bool] = None
-    # vendor
-    vendor: Optional[str] = None
-    vendor_flavors: Optional[list] = None
-    # math & fonts
-    math_constants: Optional[dict] = None
-    detected_fonts: Optional[list] = None
-    # device type
-    device_type: Optional[dict] = None
-    # enhanced
-    enhanced: Optional[dict] = None
-    # geolocation
-    ip_address: Optional[str] = None
-    ipv4: Optional[str] = None
-    ipv6: Optional[str] = None
-    city: Optional[str] = None
-    region_code: Optional[str] = None
-    region_name: Optional[str] = None
-    country_iso: Optional[str] = None
-    country_name: Optional[str] = None
-    continent_code: Optional[str] = None
-    continent_name: Optional[str] = None
-    latitude: Optional[float] = None
-    longitude: Optional[float] = None
-    geo_accuracy: Optional[int] = None
-    geo_timezone: Optional[str] = None
-    is_anonymous: Optional[bool] = None
-    is_anonymous_proxy: Optional[bool] = None
-    is_anonymous_vpn: Optional[bool] = None
-    network: Optional[str] = None
-    vpn_status: Optional[dict] = None
-
-
-class StatsResponse(BaseModel):
-    total_scrapes: int
-    unique_urls: int
-    unique_hashes: int
-    unique_countries: int
-    bot_detected: int
-    top_browsers: dict
-    top_os: dict
-    top_countries: dict
+    tech: dict
+    server_headers: dict = {}
+    success: bool = True
 
 
 def scrape_basic(url: str, raw: bool = False, render_js: bool = False) -> str:
     """Scrape using curl_cffi (TLS impersonation) with optional Playwright JS rendering."""
-
     if render_js:
         return scrape_with_playwright(url, raw)
 
     if not CURL_AVAILABLE:
-        raise Exception("curl_cffi not available — cannot scrape")
+        raise Exception("curl_cffi not available - cannot scrape")
 
     try:
         resp = curl_requests.get(
@@ -324,22 +224,25 @@ def scrape_basic(url: str, raw: bool = False, render_js: bool = False) -> str:
         return resp.text
 
     soup = BeautifulSoup(resp.text, "html.parser")
-
-    for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
+    for tag in soup(["script", "style", "noscript"]):
         tag.decompose()
 
     title = soup.title.string if soup.title else ""
-
     meta_desc = ""
     meta = soup.find("meta", attrs={"name": "description"})
     if meta:
         meta_desc = meta.get("content", "")
 
-    main = soup.find("main") or soup.find("article") or soup.find("body")
-    if main:
-        text = main.get_text(separator="\n", strip=True)
+    body = soup.find("body")
+    if body:
+        for tag in body(["nav", "footer", "header"]):
+            tag.decompose()
+        text = body.get_text(separator="\n", strip=True)
     else:
         text = soup.get_text(separator="\n", strip=True)
+
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    text = "\n".join(lines)
 
     parts = []
     if title:
@@ -352,12 +255,64 @@ def scrape_basic(url: str, raw: bool = False, render_js: bool = False) -> str:
     return "\n".join(parts)
 
 
+def fetch_raw(url: str, render_js: bool = False) -> tuple[str, dict[str, str]]:
+    """Fetch raw HTML and response headers for tech detection.
+
+    Returns (html, headers_dict).
+    """
+    if render_js:
+        return _fetch_raw_playwright(url)
+
+    if not CURL_AVAILABLE:
+        raise Exception("curl_cffi not available - cannot fetch")
+
+    resp = curl_requests.get(
+        url,
+        impersonate="chrome",
+        timeout=30,
+        allow_redirects=True,
+    )
+    resp.raise_for_status()
+    return resp.text, dict(resp.headers)
+
+
+def _fetch_raw_playwright(url: str) -> tuple[str, dict[str, str]]:
+    """Fetch raw HTML via Playwright, returning (html, headers)."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        raise Exception("Playwright not installed - JS rendering unavailable")
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        )
+        page = context.new_page()
+
+        response_headers: dict[str, str] = {}
+        def on_response(resp):
+            nonlocal response_headers
+            if resp.url == url or resp.url.rstrip("/") == url.rstrip("/"):
+                try:
+                    response_headers = resp.headers
+                except Exception:
+                    pass
+
+        page.on("response", on_response)
+        page.goto(url, wait_until="networkidle", timeout=30000)
+        html = page.content()
+        browser.close()
+
+    return html, response_headers
+
+
 def scrape_with_playwright(url: str, raw: bool = False) -> str:
     """Render JavaScript using Playwright headless browser."""
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
-        raise Exception("Playwright not installed — JS rendering unavailable")
+        raise Exception("Playwright not installed - JS rendering unavailable")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -373,22 +328,25 @@ def scrape_with_playwright(url: str, raw: bool = False) -> str:
         return content
 
     soup = BeautifulSoup(content, "html.parser")
-
-    for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
+    for tag in soup(["script", "style", "noscript"]):
         tag.decompose()
 
     title = soup.title.string if soup.title else ""
-
     meta_desc = ""
     meta = soup.find("meta", attrs={"name": "description"})
     if meta:
         meta_desc = meta.get("content", "")
 
-    main = soup.find("main") or soup.find("article") or soup.find("body")
-    if main:
-        text = main.get_text(separator="\n", strip=True)
+    body = soup.find("body")
+    if body:
+        for tag in body(["nav", "footer", "header"]):
+            tag.decompose()
+        text = body.get_text(separator="\n", strip=True)
     else:
         text = soup.get_text(separator="\n", strip=True)
+
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    text = "\n".join(lines)
 
     parts = []
     if title:
@@ -404,7 +362,6 @@ def scrape_with_playwright(url: str, raw: bool = False) -> str:
 def store_scrape(url: str, content: str, fingerprint: Optional[dict], ip_address: str, user_agent: str):
     """Store scrape record in Neon DB with all fingerprint attributes."""
     if not DATABASE_URL or not DB_AVAILABLE:
-        logger.warning(f"store_scrape skipped: DB_AVAILABLE={DB_AVAILABLE}, DATABASE_URL={'set' if DATABASE_URL else 'unset'}")
         return
     fp = fingerprint or {}
     try:
@@ -510,7 +467,6 @@ def store_scrape(url: str, content: str, fingerprint: Optional[dict], ip_address
                 ),
             )
         conn.close()
-        logger.info(f"Scrape stored: {url[:80]}")
     except Exception as e:
         logger.error(f"Failed to store scrape: {type(e).__name__}: {e}")
 
@@ -519,133 +475,24 @@ def store_scrape(url: str, content: str, fingerprint: Optional[dict], ip_address
 def root():
     return {
         "name": "IntelliScrape API",
-        "version": "2.5.0",
+        "version": WEB_VERSION,
         "endpoints": {
             "scrape": "POST /scrape",
-            "scrapes": "GET /scrapes",
-            "stats": "GET /stats",
+            "tech": "POST /tech",
+            "health": "GET /health",
+            "version": "GET /version",
         },
     }
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": "2.5.0"}
+    return {"status": "ok", "version": WEB_VERSION, "db": "connected" if (DATABASE_URL and DB_AVAILABLE) else "unconfigured"}
 
 
-@app.get("/debug/db")
-def debug_db():
-    """Diagnose database connection state."""
-    info = {
-        "psycopg_imported": DB_AVAILABLE,
-        "database_url_set": bool(DATABASE_URL),
-        "database_url_prefix": (DATABASE_URL[:40] + "...") if DATABASE_URL else None,
-        "has_channel_binding": "channel_binding" in (DATABASE_URL or ""),
-    }
-    if not DATABASE_URL:
-        info["error"] = "DATABASE_URL env var not set"
-        return info
-    if not DB_AVAILABLE:
-        info["error"] = "psycopg import failed"
-        return info
-    try:
-        conn = psycopg.connect(DATABASE_URL, autocommit=True)
-        with conn.cursor() as cur:
-            cur.execute("SELECT version()")
-            pg_version = cur.fetchone()[0]
-            cur.execute("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'scrapes')")
-            table_exists = cur.fetchone()[0]
-            if table_exists:
-                cur.execute("SELECT COUNT(*) FROM scrapes")
-                row_count = cur.fetchone()[0]
-                cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'scrapes' ORDER BY ordinal_position")
-                columns = [r[0] for r in cur.fetchall()]
-            else:
-                row_count = None
-                columns = []
-        conn.close()
-        info["pg_version"] = pg_version
-        info["table_exists"] = table_exists
-        info["row_count"] = row_count
-        info["column_count"] = len(columns)
-        info["columns"] = columns
-        info["status"] = "connected"
-    except Exception as e:
-        info["status"] = "error"
-        info["error"] = f"{type(e).__name__}: {e}"
-    return info
-
-
-@app.get("/debug/insert")
-def debug_insert():
-    """Test a minimal INSERT to expose the exact error."""
-    if not DATABASE_URL or not DB_AVAILABLE:
-        return {"error": "DB not available"}
-    try:
-        conn = psycopg.connect(DATABASE_URL, autocommit=True)
-        with conn.cursor() as cur:
-            cur.execute(
-                """INSERT INTO scrapes (
-                    url, content_preview,
-                    fp_hash, confidence_score,
-                    incognito, incognito_browser,
-                    is_bot, bot_signals, bot_confidence,
-                    browser_name, browser_version, user_agent, platform,
-                    screen_width, screen_height, color_depth, color_gamut,
-                    hardware_concurrency, device_memory,
-                    os_name, os_version,
-                    local_storage, session_storage, indexed_db,
-                    audio, webgl_vendor, webgl_renderer, webgl_image_hash,
-                    canvas_winding, canvas_geometry, canvas_text,
-                    plugins, languages, cookies_enabled, do_not_track,
-                    timezone, touch_max_points, touch_event, touch_start,
-                    vendor, vendor_flavors,
-                    math_constants, detected_fonts, device_type, enhanced,
-                    ip_address, ipv4, ipv6,
-                    city, region_code, region_name,
-                    country_iso, country_name, continent_code, continent_name,
-                    latitude, longitude, geo_accuracy, geo_timezone,
-                    is_anonymous, is_anonymous_proxy, is_anonymous_vpn,
-                    network, vpn_status
-                ) VALUES (
-                    %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                    %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                    %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                    %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                    %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                    %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                    %s,%s,%s,%s
-                )""",
-                (
-                    "https://debug-test.example.com",
-                    "test content",
-                    "test-hash-123", 0.95,
-                    False, None,
-                    False, None, 0.0,
-                    "Chrome", "120.0", "test-agent", "Win32",
-                    1920, 1080, 24, "srgb",
-                    8, 8,
-                    "Windows", "10",
-                    True, True, True,
-                    0.123456, "Intel Inc.", "Radeon", "abc123",
-                    True, "pass", "text",
-                    None, None, True, "1",
-                    "America/New_York", 5, True, False,
-                    "Google Inc.", None,
-                    None, None, None, None,
-                    "127.0.0.1", "127.0.0.1", None,
-                    None, None, None,
-                    None, None, None, None,
-                    None, None, None, None,
-                    None, None, None, None,
-                    None, None,
-                    "residential", None,
-                ),
-            )
-        conn.close()
-        return {"status": "inserted", "message": "Test row inserted successfully"}
-    except Exception as e:
-        return {"status": "error", "error": f"{type(e).__name__}: {e}"}
+@app.get("/version")
+def version():
+    return {"version": WEB_VERSION, "engine": "standalone", "dependencies": {"curl_cffi": CURL_AVAILABLE, "psycopg": DB_AVAILABLE}}
 
 
 @app.post("/scrape")
@@ -670,78 +517,44 @@ def scrape_url(req: ScrapeRequest, request: Request):
         raise HTTPException(status_code=400, detail=error_msg)
 
 
-@app.get("/scrapes")
-def get_scrapes(limit: int = 100):
-    """Get recent scrape logs with all fingerprint attributes."""
-    if not DATABASE_URL or not DB_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Database not configured")
+@app.post("/tech")
+def detect_tech(req: TechRequest):
+    """Detect website technology stack (frameworks, CMS, analytics, CDN, etc)."""
+    url_str = str(req.url)
+    logger.info(f"Tech detection request: {url_str}")
     try:
-        conn = get_db()
-        with conn.cursor() as cur:
-            cur.execute(
-                """SELECT * FROM scrapes ORDER BY created_at DESC LIMIT %s""",
-                (min(limit, 500),),
+        if not TECH_AVAILABLE:
+            raise Exception("intelliscrape.tech module not installed - pip install intelliscrape")
+
+        html, headers = fetch_raw(url_str, render_js=req.render)
+        if not html:
+            raise Exception("Empty response from target website")
+
+        tech = TechStackExtractor.extract(
+            html=html,
+            headers=headers,
+            url=url_str,
+        )
+
+        interesting_headers = {
+            k: v for k, v in tech.headers.items()
+            if k.lower() in (
+                "server", "x-powered-by", "x-generator",
+                "via", "x-amz-cf-pop", "x-vercel",
+                "cf-ray", "x-shopify-stage",
             )
-            cols = [desc[0] for desc in cur.description]
-            rows = cur.fetchall()
-        conn.close()
-        result = []
-        for row in rows:
-            d = dict(zip(cols, row))
-            # Serialize non-JSON-friendly types
-            for k, v in d.items():
-                if hasattr(v, "isoformat"):
-                    d[k] = v.isoformat()
-                elif isinstance(v, (dict, list)):
-                    d[k] = v  # psycopg returns dicts/lists for JSONB
-            result.append(d)
-        return result
-    except Exception as e:
-        logger.error(f"Failed to fetch scrapes: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        }
 
-
-@app.get("/stats")
-def get_stats():
-    """Get scrape statistics with fingerprint analytics."""
-    if not DATABASE_URL or not DB_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Database not configured")
-    try:
-        conn = get_db()
-        with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) FROM scrapes")
-            total = cur.fetchone()[0]
-            cur.execute("SELECT COUNT(DISTINCT url) FROM scrapes")
-            unique = cur.fetchone()[0]
-            cur.execute("SELECT COUNT(DISTINCT fp_hash) FROM scrapes WHERE fp_hash IS NOT NULL")
-            unique_hashes = cur.fetchone()[0]
-            cur.execute("SELECT COUNT(DISTINCT country_iso) FROM scrapes WHERE country_iso IS NOT NULL")
-            unique_countries = cur.fetchone()[0]
-            cur.execute("SELECT COUNT(*) FROM scrapes WHERE is_bot = true")
-            bot_detected = cur.fetchone()[0]
-            # Top browsers
-            cur.execute("SELECT browser_name, COUNT(*) as c FROM scrapes WHERE browser_name IS NOT NULL GROUP BY browser_name ORDER BY c DESC LIMIT 5")
-            top_browsers = {r[0]: r[1] for r in cur.fetchall()}
-            # Top OS
-            cur.execute("SELECT os_name, COUNT(*) as c FROM scrapes WHERE os_name IS NOT NULL GROUP BY os_name ORDER BY c DESC LIMIT 5")
-            top_os = {r[0]: r[1] for r in cur.fetchall()}
-            # Top countries
-            cur.execute("SELECT country_name, COUNT(*) as c FROM scrapes WHERE country_name IS NOT NULL GROUP BY country_name ORDER BY c DESC LIMIT 10")
-            top_countries = {r[0]: r[1] for r in cur.fetchall()}
-        conn.close()
-        return StatsResponse(
-            total_scrapes=total,
-            unique_urls=unique,
-            unique_hashes=unique_hashes,
-            unique_countries=unique_countries,
-            bot_detected=bot_detected,
-            top_browsers=top_browsers,
-            top_os=top_os,
-            top_countries=top_countries,
-        ).model_dump()
+        logger.info(f"Tech detection success: {url_str} ({len(tech.all_tech)} technologies)")
+        return TechResponse(
+            url=url_str,
+            tech=tech.to_dict(),
+            server_headers=interesting_headers,
+        )
     except Exception as e:
-        logger.error(f"Failed to fetch stats: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        error_msg = str(e)
+        logger.error(f"Tech detection failed: {url_str} -> {error_msg}")
+        raise HTTPException(status_code=400, detail=error_msg)
 
 
 if __name__ == "__main__":

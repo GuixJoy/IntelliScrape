@@ -8,11 +8,12 @@ import json
 
 from intelliscrape import IntelliScrape, scrape
 from intelliscrape.crawler import crawl
+from intelliscrape.tech import TechStackExtractor
 
 app = FastAPI(
     title="IntelliScrape API",
     description="Scrape any website with anti-detection capabilities",
-    version="2.1.0",
+    version="2.6.0",
 )
 
 # Allow CORS for frontend
@@ -57,14 +58,26 @@ class CrawlResponse(BaseModel):
     success: bool = True
 
 
+class TechRequest(BaseModel):
+    url: HttpUrl
+
+
+class TechResponse(BaseModel):
+    url: str
+    tech: dict
+    server_headers: dict = {}
+    success: bool = True
+
+
 @app.get("/")
 def root():
     return {
         "name": "IntelliScrape API",
-        "version": "2.1.0",
+        "version": "2.6.0",
         "endpoints": {
             "scrape": "POST /scrape",
             "structured": "POST /structured",
+            "tech": "POST /tech",
             "crawl": "POST /crawl",
         }
     }
@@ -92,6 +105,28 @@ def get_structured(req: ScrapeRequest):
             description=data.description,
             meta_tags=data.meta_tags,
             headings=data.headings,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/tech")
+def detect_tech(req: TechRequest):
+    """Detect website technology stack (frameworks, CMS, analytics, CDN, etc)."""
+    try:
+        scraper = IntelliScrape()
+        tech = scraper.detect_tech(str(req.url))
+        return TechResponse(
+            url=str(req.url),
+            tech=tech.to_dict(),
+            server_headers={
+                k: v for k, v in tech.headers.items()
+                if k.lower() in (
+                    "server", "x-powered-by", "x-generator",
+                    "via", "x-amz-cf-pop", "x-vercel",
+                    "cf-ray", "x-shopify-stage",
+                )
+            },
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
