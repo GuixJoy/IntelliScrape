@@ -16,6 +16,10 @@ setup(
         "lxml",
         "curl_cffi>=0.7.0",
         "playwright>=1.40.0",
+        "rich",
+        "fastapi[standard]>=0.100.0",
+        "uvicorn>=0.23.0",
+        "pydantic>=2.0.0",
     ],
     extras_require={
         "stealth": ["nodriver>=0.30"],
