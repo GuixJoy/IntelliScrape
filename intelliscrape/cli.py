@@ -159,6 +159,10 @@ Examples:
     parser.add_argument("--check-links", action="store_true",
                        help="Check all links on the page and report status")
 
+    # Website intelligence
+    parser.add_argument("--tech", action="store_true",
+                       help="Detect website technology stack (frameworks, CMS, analytics, CDN, etc.)")
+
     # Downloads
     parser.add_argument("--download", action="store_true", help="Download linked files")
     parser.add_argument("--download-images", action="store_true", help="Download all images")
@@ -187,6 +191,8 @@ Examples:
         
         if args.check_links:
             return _check_links_cmd(args)
+        elif args.tech:
+            return _tech_report(args)
         elif args.crawl:
             return _crawl(args)
         elif args.paginate:
@@ -430,6 +436,97 @@ def _check_links_cmd(args) -> int:
         with open(args.output, "w", encoding="utf-8") as f:
             _json.dump(export_data, f, indent=2, ensure_ascii=False)
         console.print(f"[green]Saved link check results to {args.output}[/green]")
+
+    return 0
+
+
+def _tech_report(args) -> int:
+    """Detect and display website technology stack."""
+    scraper = _create_scraper(args)
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task(f"Analyzing {args.url}...", total=None)
+
+        tech = scraper.detect_tech(args.url, force_browser=args.force_browser)
+
+        progress.update(task, completed=True)
+
+    # --- Summary panel ---
+    s = tech.summary
+    total = len(tech.all_tech)
+    console.print()
+    console.print(Panel(
+        f"[bold]URL:[/bold] {tech.url}\n"
+        f"[bold]Technologies found:[/bold] {total}",
+        title="Website Intelligence",
+        border_style="blue",
+    ))
+
+    # --- Category tables ---
+    category_labels = {
+        "frameworks": "Frameworks",
+        "css_frameworks": "CSS Frameworks",
+        "js_libraries": "JS Libraries",
+        "analytics": "Analytics & Tracking",
+        "cdn": "CDN",
+        "hosting": "Hosting / Platform",
+        "cms": "CMS",
+        "payment": "Payment Providers",
+        "languages": "Languages / Runtimes",
+        "email_marketing": "Email / Marketing",
+        "other": "Other",
+    }
+
+    for attr, label in category_labels.items():
+        items = getattr(tech, attr)
+        if not items:
+            continue
+        table = Table(title=label, show_header=True)
+        table.add_column("Technology", style="cyan")
+        table.add_column("Confidence", justify="right", style="green")
+        table.add_column("Evidence", style="dim")
+        for t in items:
+            table.add_row(
+                t.name,
+                f"{t.confidence:.0%}",
+                ", ".join(t.evidence[:3]),
+            )
+        console.print(table)
+
+    # --- Server headers ---
+    interesting_headers = {
+        k: v for k, v in tech.headers.items()
+        if k.lower() in (
+            "server", "x-powered-by", "x-generator",
+            "via", "x-amz-cf-pop", "x-vercel",
+            "cf-ray", "x-shopify-stage",
+        )
+    }
+    if interesting_headers:
+        htable = Table(title="Server Headers", show_header=True)
+        htable.add_column("Header", style="cyan")
+        htable.add_column("Value", style="green")
+        for k, v in interesting_headers.items():
+            htable.add_row(k, v)
+        console.print(htable)
+
+    if total == 0:
+        console.print("[yellow]No technologies detected.[/yellow]")
+
+    # --- Export ---
+    if args.export:
+        return _export_content(tech.to_dict(), args.export, args.output, args.url)
+
+    if args.output:
+        import json as _json
+        with open(args.output, "w", encoding="utf-8") as f:
+            _json.dump(tech.to_dict(), f, indent=2, ensure_ascii=False)
+        console.print(f"[green]Saved tech report to {args.output}[/green]")
 
     return 0
 

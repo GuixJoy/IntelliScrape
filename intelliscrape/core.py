@@ -36,6 +36,7 @@ from .proxy.free_finder import FreeProxyFinder, IntelligentProxyFinder
 from .session import SessionManager
 from .downloader import TimeoutType
 from .link_checker import LinkCheckReport, check_links as _check_links
+from .tech.extractor import TechStack, TechStackExtractor
 from .utils import force_dynamic, html_needs_browser
 
 
@@ -643,6 +644,40 @@ class IntelliScrape:
             max_workers=max_workers,
             allowed_statuses=allowed_statuses,
             log=log,
+        )
+
+    def detect_tech(
+        self,
+        url: str,
+        *,
+        force_browser: bool = False,
+        engine: Optional[str] = None,
+    ) -> TechStack:
+        """Detect the technology stack of a website.
+
+        Parameters
+        ----------
+        url : str
+            Target URL.
+        force_browser : bool
+            Force browser engine for JS-heavy sites.
+        engine : str, optional
+            Force a specific engine.
+
+        Returns
+        -------
+        TechStack
+            Detected frameworks, CSS, analytics, CDN, hosting, CMS,
+            payment providers, languages, and more.
+        """
+        result = self._fetch(url, engine=engine, force_browser=force_browser)
+        if not result.success:
+            raise IntelliScrapeError(f"Failed to fetch {url}: {result.error}")
+        return TechStackExtractor.extract(
+            html=result.html,
+            headers=result.headers,
+            cookies=result.cookies,
+            url=url,
         )
 
     def _wait_for_manual_captcha(self, url: str, captcha_info: CaptchaInfo) -> ScrapeResult:

@@ -24,6 +24,7 @@ Features:
 - File downloads (images, PDFs, documents)
 - Request/response interception
 - Link checking (status, categorization, broken link detection)
+- Website Intelligence (detect frameworks, CMS, analytics, CDN, hosting, and more)
 
 Quick Start:
     >>> from intelliscrape import scrape
@@ -51,8 +52,15 @@ Analyze Site:
 
 Check Links:
     >>> from intelliscrape import check_links
-    >>> report = check_links("https://example.com")
-    >>> print(f"Total: {report.summary.total}, Broken: {report.summary.broken}")
+>>> report = check_links("https://example.com")
+>>> print(f"Total: {report.summary.total}, Broken: {report.summary.broken}")
+
+Website Intelligence:
+    >>> from intelliscrape import IntelliScrape
+    >>> scraper = IntelliScrape()
+    >>> tech = scraper.detect_tech("https://stripe.com")
+    >>> print(tech.summary)
+    {'frameworks': ['next.js'], 'cms': [], 'analytics': ['google analytics'], ...}
 """
 
 from .core import IntelliScrape, scrape
@@ -101,6 +109,7 @@ from .link_checker import (
     LinkStatus,
     LinkType,
 )
+from .tech.extractor import TechStack, TechInfo, TechStackExtractor
 
 __version__ = "2.5.1"
 
@@ -190,6 +199,10 @@ __all__ = [
     "SingleLinkResult",
     "LinkStatus",
     "LinkType",
+    # Website Intelligence
+    "TechStack",
+    "TechInfo",
+    "TechStackExtractor",
     # Re-exports
     "ScrapeResult",
 ]
