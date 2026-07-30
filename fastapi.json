@@ -1,4 +1,0 @@
-{
-  "$schema": "https://fastapi.tiangolo.com/schema.json",
-  "app": "main:app"
-}
