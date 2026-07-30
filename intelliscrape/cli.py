@@ -32,6 +32,7 @@ from .export import DataExporter
 from .downloader import Downloader
 from .cookies import CookieManager
 from .interceptor import RequestInterceptor
+from .link_checker import check_links as _check_links
 from .exceptions import IntelliScrapeError
 
 
@@ -154,6 +155,10 @@ Examples:
     # Crawl
     parser.add_argument("--crawl", action="store_true", help="Crawl entire website")
 
+    # Link checking
+    parser.add_argument("--check-links", action="store_true",
+                       help="Check all links on the page and report status")
+
     # Downloads
     parser.add_argument("--download", action="store_true", help="Download linked files")
     parser.add_argument("--download-images", action="store_true", help="Download all images")
@@ -180,7 +185,9 @@ Examples:
         if args.analyze:
             return _analyze(args)
         
-        if args.crawl:
+        if args.check_links:
+            return _check_links_cmd(args)
+        elif args.crawl:
             return _crawl(args)
         elif args.paginate:
             return _paginate(args)
@@ -310,6 +317,119 @@ def _analyze(args) -> int:
     console.print(f"  • Providers available: {', '.join(proxy_status['providers_available']) or 'None'}")
     console.print(f"  • Healthy proxies: {proxy_status['healthy_proxies']}")
     console.print(f"  • Free proxies enabled: {'Yes' if not args.no_free_proxies else 'No'}")
+
+    return 0
+
+
+def _check_links_cmd(args) -> int:
+    """Check all links on a page and display results."""
+    scraper = _create_scraper(args)
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task(f"Checking links on {args.url}...", total=None)
+
+        # Fetch the page HTML first (uses the scraper's engine chain)
+        html = scraper.scrape(args.url, return_raw=True, force_browser=args.force_browser)
+
+        progress.update(task, description="Checking link statuses...")
+
+        # Use the link_checker with a session from the scraper's static engine
+        from requests import Session
+        from .downloader import create_session as _create_session
+
+        session = _create_session()
+        try:
+            report = _check_links(
+                args.url,
+                timeout=10,
+                session=session,
+                downloader=lambda url, timeout: html,
+            )
+        finally:
+            session.close()
+
+        progress.update(task, completed=True)
+
+    # --- Summary panel ---
+    s = report.summary
+    console.print()
+    console.print(Panel(
+        f"[bold]URL:[/bold] {report.url}\n"
+        f"[bold]Total links:[/bold] {s.total}\n"
+        f"[green]OK:[/green] {s.ok}  "
+        f"[yellow]Redirected:[/yellow] {s.redirected}  "
+        f"[red]Broken:[/red] {s.broken}  "
+        f"[red]Error:[/red] {s.error}  "
+        f"[red]Timeout:[/red] {s.timeout}\n"
+        f"[bold]Internal:[/bold] {s.internal}  "
+        f"[bold]External:[/bold] {s.external}\n"
+        f"[bold]Success rate:[/bold] {s.success_rate:.1f}%",
+        title="Link Check Summary",
+        border_style="blue",
+    ))
+
+    # --- By-type breakdown ---
+    if s.by_type:
+        type_table = Table(title="Links by Type", show_header=True)
+        type_table.add_column("Type", style="cyan")
+        type_table.add_column("Count", justify="right", style="green")
+        for lt, count in sorted(s.by_type.items(), key=lambda x: -x[1]):
+            type_table.add_row(lt, str(count))
+        console.print(type_table)
+
+    # --- Broken links detail ---
+    broken = [(r.url, r.status_code, r.error) for r in report.links if not r.is_ok]
+    if broken:
+        broken_table = Table(title="Broken Links", show_header=True)
+        broken_table.add_column("URL", style="red")
+        broken_table.add_column("Status", justify="right", style="yellow")
+        broken_table.add_column("Error", style="dim")
+        for lnk, code, err in broken[:50]:  # limit to first 50
+            broken_table.add_row(lnk, str(code) if code else "-", err or "")
+        console.print(broken_table)
+        if len(broken) > 50:
+            console.print(f"  [dim]... and {len(broken) - 50} more broken links[/dim]")
+    else:
+        console.print("[green]All links are working![/green]")
+
+    # --- Export ---
+    if args.export:
+        export_data = [
+            {
+                "url": r.url,
+                "status_code": r.status_code,
+                "status": r.status.value,
+                "type": r.link_type.value,
+                "is_external": r.is_external,
+                "redirect_url": r.redirect_url or "",
+                "error": r.error or "",
+            }
+            for r in report.links
+        ]
+        return _export_content(export_data, args.export, args.output, args.url)
+
+    if args.output:
+        import json as _json
+        export_data = [
+            {
+                "url": r.url,
+                "status_code": r.status_code,
+                "status": r.status.value,
+                "type": r.link_type.value,
+                "is_external": r.is_external,
+                "redirect_url": r.redirect_url or "",
+                "error": r.error or "",
+            }
+            for r in report.links
+        ]
+        with open(args.output, "w", encoding="utf-8") as f:
+            _json.dump(export_data, f, indent=2, ensure_ascii=False)
+        console.print(f"[green]Saved link check results to {args.output}[/green]")
 
     return 0
 

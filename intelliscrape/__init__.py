@@ -23,6 +23,7 @@ Features:
 - Data export (JSON, CSV, Excel, SQLite, Markdown)
 - File downloads (images, PDFs, documents)
 - Request/response interception
+- Link checking (status, categorization, broken link detection)
 
 Quick Start:
     >>> from intelliscrape import scrape
@@ -43,10 +44,15 @@ With Residential Proxies:
 Analyze Site:
     >>> from intelliscrape import IntelliScrape
     >>> scraper = IntelliScrape()
-    >>> analysis = scraper.analyze("https://amazon.com")
-    >>> print(f"Site type: {analysis.site_type.value}")
-    >>> print(f"Protection: {analysis.protection_level.value}")
-    >>> print(f"Recommended engine: {analysis.recommended_engine}")
+>>> analysis = scraper.analyze("https://amazon.com")
+>>> print(f"Site type: {analysis.site_type.value}")
+>>> print(f"Protection: {analysis.protection_level.value}")
+>>> print(f"Recommended engine: {analysis.recommended_engine}")
+
+Check Links:
+    >>> from intelliscrape import check_links
+    >>> report = check_links("https://example.com")
+    >>> print(f"Total: {report.summary.total}, Broken: {report.summary.broken}")
 """
 
 from .core import IntelliScrape, scrape
@@ -86,6 +92,15 @@ from .retry import SmartRetry, RetryConfig, RetryAttempt
 from .cookies import CookieManager, CookieData
 from .interceptor import RequestInterceptor, ResponseModifier, InterceptedRequest, InterceptedResponse
 from .ip_manager import IPManager, NaturalRotator, Proxy, ProxyType, IPInfo
+from .link_checker import (
+    check_links,
+    collect_links,
+    LinkCheckReport,
+    LinkCheckSummary,
+    SingleLinkResult,
+    LinkStatus,
+    LinkType,
+)
 
 __version__ = "2.5.0"
 
@@ -167,6 +182,14 @@ __all__ = [
     "Proxy",
     "ProxyType",
     "IPInfo",
+    # Link checking
+    "check_links",
+    "collect_links",
+    "LinkCheckReport",
+    "LinkCheckSummary",
+    "SingleLinkResult",
+    "LinkStatus",
+    "LinkType",
     # Re-exports
     "ScrapeResult",
 ]

@@ -8,7 +8,7 @@ Intelligent scraping with auto-detection and smart optimization.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Union
 from urllib.parse import urlsplit
 
 from .anti_detection.antibot import AntiBotDetector, AntiBotInfo
@@ -34,6 +34,8 @@ from .proxy import ProxyConfig, ProxyManager
 from .proxy.manager import IntelligentProxyManager
 from .proxy.free_finder import FreeProxyFinder, IntelligentProxyFinder
 from .session import SessionManager
+from .downloader import TimeoutType
+from .link_checker import LinkCheckReport, check_links as _check_links
 from .utils import force_dynamic, html_needs_browser
 
 
@@ -601,6 +603,47 @@ class IntelliScrape:
                 cookies=result.cookies,
             )
         return None
+
+    def check_links(
+        self,
+        url: str,
+        *,
+        timeout: TimeoutType | None = None,
+        ignore_external: bool = False,
+        max_workers: int = 10,
+        allowed_statuses: Sequence[int] | None = None,
+        log: Callable[[str], None] | None = None,
+    ) -> LinkCheckReport:
+        """Check all links on a page and return a full report.
+
+        Parameters
+        ----------
+        url : str
+            The page URL whose links should be verified.
+        timeout : int or float, optional
+            Per-request timeout in seconds (default 5).
+        ignore_external : bool
+            When *True* only links on the same host are checked.
+        max_workers : int
+            Number of concurrent threads used for checking (default 10).
+        allowed_statuses : sequence of int, optional
+            HTTP status codes considered "OK" (default 200-399).
+        log : callable, optional
+            Receives progress messages.
+
+        Returns
+        -------
+        LinkCheckReport
+            Report with per-link results and summary statistics.
+        """
+        return _check_links(
+            url,
+            timeout=timeout,
+            ignore_external=ignore_external,
+            max_workers=max_workers,
+            allowed_statuses=allowed_statuses,
+            log=log,
+        )
 
     def _wait_for_manual_captcha(self, url: str, captcha_info: CaptchaInfo) -> ScrapeResult:
         """Open a visible browser and wait for the user to solve a CAPTCHA.

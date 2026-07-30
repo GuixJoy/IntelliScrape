@@ -35,6 +35,7 @@ No more switching between `requests`, `playwright`, and `selenium`. No more debu
 - Proxy rotation with free proxy finder
 - Export to JSON, CSV, Excel, SQLite, Text, Markdown
 - Async support for concurrent scraping
+- Link checking (status verification, categorization, broken link detection)
 
 ---
 
@@ -194,6 +195,12 @@ intelliscrape [URL] [OPTIONS]
 |---|---|
 | `--crawl` | Crawl entire website |
 
+### Link Checking
+
+| Flag | Description |
+|---|---|
+| `--check-links` | Check all links on the page and report status |
+
 ### Downloads
 
 | Flag | Description |
@@ -231,6 +238,10 @@ intelliscrape https://example.com/products --paginate --max-pages 10
 
 # Crawl
 intelliscrape https://docs.python.org --crawl --max-pages 50
+
+# Check links
+intelliscrape https://example.com --check-links
+intelliscrape https://example.com --check-links --export json -o report.json
 
 # Export
 intelliscrape https://example.com --export csv -o data.csv
@@ -377,6 +388,46 @@ info = scraper.check_antibot("https://site.com")
 if info:
     print(info.vendor)       # AntiBotVendor.CLOUDFLARE
     print(info.confidence)   # 0.95
+```
+
+##### `check_links(url, **kwargs)`
+
+Check all links on a page and return a detailed report with status codes, categorization, and summary statistics.
+
+```python
+report = scraper.check_links("https://example.com", ignore_external=True)
+
+print(f"Total links: {report.summary.total}")
+print(f"OK: {report.summary.ok}, Broken: {report.summary.broken}")
+print(f"Success rate: {report.summary.success_rate:.1f}%")
+print(f"Internal: {report.summary.internal}, External: {report.summary.external}")
+print(f"By type: {report.summary.by_type}")
+
+# Per-link details
+for link in report.links:
+    print(f"  {link.url} -> {link.status_code} ({link.status.value})")
+```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `url` | str | required | Page URL to check |
+| `timeout` | int/float | 5 | Per-request timeout in seconds |
+| `ignore_external` | bool | False | Skip external links |
+| `max_workers` | int | 10 | Concurrent threads for checking |
+| `allowed_statuses` | sequence | 200-399 | HTTP codes considered "OK" |
+
+Returns `LinkCheckReport` with:
+- `report.links` — list of `SingleLinkResult` (url, status_code, status, link_type, is_external)
+- `report.summary` — `LinkCheckSummary` with aggregate stats
+- `report.summary.by_type` — breakdown by link type (page, image, video, etc.)
+
+**Standalone function:**
+
+```python
+from intelliscrape import check_links
+
+report = check_links("https://example.com")
+print(f"Broken: {report.summary.broken}")
 ```
 
 ##### `find_free_proxies(test=True)`
@@ -782,6 +833,28 @@ DataExporter.to_csv(
 )
 ```
 
+### Check Links on a Page
+
+```python
+from intelliscrape import check_links
+
+report = check_links("https://example.com")
+
+# Summary
+print(f"Total: {report.summary.total}")
+print(f"OK: {report.summary.ok}")
+print(f"Broken: {report.summary.broken}")
+print(f"Success rate: {report.summary.success_rate:.1f}%")
+
+# Only internal links
+report = check_links("https://example.com", ignore_external=True)
+
+# Export broken links
+for link in report.links:
+    if not link.is_ok:
+        print(f"BROKEN: {link.url} -> {link.status_code}")
+```
+
 ---
 
 ## Troubleshooting
@@ -815,6 +888,7 @@ intelliscrape/
     cookies.py              # CookieManager
     crawler.py              # crawl(), CrawlResult
     interceptor.py          # RequestInterceptor
+    link_checker.py         # check_links, LinkCheckReport
     parser.py               # HTML DOM builder
     cleaner.py              # Text cleaning
     utils.py                # HTML analysis
