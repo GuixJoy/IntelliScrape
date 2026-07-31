@@ -16,6 +16,7 @@ import argparse
 import json
 import sys
 import io
+from urllib.parse import urlsplit
 
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
@@ -132,6 +133,7 @@ Examples:
     parser.add_argument("--username", type=str, help="Login username/email")
     parser.add_argument("--password", type=str, help="Login password")
     parser.add_argument("--login-url", type=str, help="Explicit login URL")
+    parser.add_argument("--manual-login", action="store_true", help="Open browser for manual login (for SPA sites)")
 
     # Cookies
     parser.add_argument("--save-cookies", type=str, help="Save cookies to file")
@@ -542,32 +544,53 @@ def _scrape(args) -> int:
     scraper = _create_scraper(args)
 
     # Handle login
-    if args.login:
-        if not args.username or not args.password:
-            console.print("[red]Error: --username and --password required for login[/red]")
-            return 1
+    if args.login or args.manual_login:
+        auth = Authenticator()
 
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console,
-            transient=True,
-        ) as progress:
-            task = progress.add_task(f"Logging in to {args.url}...", total=None)
+        if args.manual_login:
+            # Manual login: open browser directly
+            console.print("[cyan]Opening browser for manual login...[/cyan]")
+            console.print("[dim]Login manually, then come back here.[/dim]")
 
-            auth = Authenticator(scraper.session_manager.session)
+            from playwright.sync_api import sync_playwright
+            with sync_playwright() as p:
+                success = auth._login_manual(p, args.url, timeout=30)
+        else:
+            # Automated login with credentials
+            if not args.username or not args.password:
+                console.print("[red]Error: --username and --password required for login[/red]")
+                return 1
+
             credentials = LoginCredentials(
                 username=args.username,
                 password=args.password,
             )
             success = auth.login(args.url, credentials, login_url=args.login_url)
 
-            progress.update(task, completed=True)
-
         if success:
             console.print("[green]Login successful![/green]")
+            # Transfer authenticated cookies to scraper engines
+            auth_cookies = dict(auth.session.cookies)
+            if auth_cookies:
+                scraper.session_manager.update_cookies(auth_cookies)
+                console.print(f"[dim]Transferred {len(auth_cookies)} cookies to scraper[/dim]")
+            
+            # Transfer auth token (for SPA/Firebase auth)
+            auth_token = ""
+            base_url = f"{urlsplit(args.url).scheme}://{urlsplit(args.url).netloc}"
+            if base_url in auth.sessions:
+                auth_token = auth.sessions[base_url].auth_token
+            if auth_token:
+                scraper.session_manager.set_auth_token(auth_token)
+                console.print("[dim]Transferred auth token to scraper (SPA mode)[/dim]")
+            else:
+                console.print("[dim]Cookies transferred for authentication[/dim]")
         else:
-            console.print("[yellow]Login failed, continuing anyway...[/yellow]")
+            console.print("[yellow]Login failed. Possible reasons:[/yellow]")
+            console.print("[dim]  - Wrong credentials[/dim]")
+            console.print("[dim]  - Login URL not found or changed[/dim]")
+            console.print("[dim]  - CAPTCHA or 2FA required[/dim]")
+            console.print("[dim]Continuing anyway...[/dim]")
 
     # Load cookies
     if args.load_cookies:

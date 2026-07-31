@@ -403,6 +403,18 @@ class IntelliScrape:
             if force_dynamic(url):
                 engine = "playwright_stealth"
 
+        # Inject session cookies if available (from --login)
+        session_cookies = self.session_manager.get_cookies()
+        if session_cookies and "cookies" not in kwargs:
+            kwargs["cookies"] = session_cookies
+
+        # Inject auth token if available (SPA/Firebase auth)
+        auth_token = self.session_manager.get_auth_token()
+        if auth_token and "headers" not in kwargs:
+            kwargs["headers"] = {"Authorization": f"Bearer {auth_token}"}
+        elif auth_token and "headers" in kwargs:
+            kwargs["headers"]["Authorization"] = f"Bearer {auth_token}"
+
         # Get result
         result = self._fetch(url, engine=engine, **kwargs)
 

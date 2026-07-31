@@ -17,6 +17,7 @@ class UserProfile:
     local_storage: Dict[str, str] = field(default_factory=dict)
     session_storage: Dict[str, str] = field(default_factory=dict)
     meta: Dict[str, Any] = field(default_factory=dict)
+    auth_token: str = ""  # JWT/Firebase token for SPA auth
 
 
 class SessionManager:
@@ -69,7 +70,12 @@ class SessionManager:
 
     def update_cookies(self, cookies: Dict[str, str], profile_name: Optional[str] = None) -> None:
         """Update cookies for a profile."""
-        profile = self._profiles.get(profile_name or self._current_profile)
+        target = profile_name or self._current_profile
+        if not target:
+            # Auto-create a default profile for cookie storage
+            target = "default"
+            self.set_current_profile(target)
+        profile = self._profiles.get(target)
         if profile:
             profile.cookies.update(cookies)
             self._save_profile(profile)
@@ -78,6 +84,22 @@ class SessionManager:
         """Get cookies for a profile."""
         profile = self._profiles.get(profile_name or self._current_profile)
         return profile.cookies if profile else {}
+
+    def set_auth_token(self, token: str, profile_name: Optional[str] = None) -> None:
+        """Set auth token for a profile (JWT/Firebase token)."""
+        target = profile_name or self._current_profile
+        if not target:
+            target = "default"
+            self.set_current_profile(target)
+        profile = self._profiles.get(target)
+        if profile:
+            profile.auth_token = token
+            self._save_profile(profile)
+
+    def get_auth_token(self, profile_name: Optional[str] = None) -> str:
+        """Get auth token for a profile."""
+        profile = self._profiles.get(profile_name or self._current_profile)
+        return profile.auth_token if profile else ""
 
     def clear_profile(self, name: str) -> None:
         """Clear all data for a profile."""
@@ -114,6 +136,7 @@ class SessionManager:
             "local_storage": profile.local_storage,
             "session_storage": profile.session_storage,
             "meta": profile.meta,
+            "auth_token": profile.auth_token,
         }
         with open(profile_path, "w") as f:
             json.dump(data, f, indent=2)
@@ -133,6 +156,7 @@ class SessionManager:
                 local_storage=data.get("local_storage", {}),
                 session_storage=data.get("session_storage", {}),
                 meta=data.get("meta", {}),
+                auth_token=data.get("auth_token", ""),
             )
         except Exception:
             return None

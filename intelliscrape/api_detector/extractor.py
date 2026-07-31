@@ -5,12 +5,13 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 from .signatures import (
     REST_PATTERNS,
     GRAPHQL_PATTERNS,
     WEBSOCKET_PATTERNS,
+    FRAMEWORK_ROUTES,
     DOC_PATHS,
     DOC_SIGNATURES,
     THIRD_PARTY_DOMAINS,
@@ -19,6 +20,8 @@ from .signatures import (
     GENERIC_KEY_PATTERNS,
     NOISE_STRINGS,
     NOISE_PATH_PATTERNS,
+    COMMON_PAGE_ROUTES,
+    METHOD_CONTEXT_PATTERNS,
 )
 
 
@@ -131,8 +134,16 @@ def _shannon_entropy(s: str) -> float:
 
 
 def _is_noise_path(path: str) -> bool:
-    """Check if a path is a noise/static resource."""
+    """Check if a path is a noise/static resource or common page route."""
     if path in NOISE_STRINGS or len(path) < 3:
+        return True
+    # Clean and normalize for comparison
+    path_clean = path.lower().rstrip("/").split("?")[0].split("#")[0]
+    # Check against common page routes (exact match)
+    if path_clean in COMMON_PAGE_ROUTES:
+        return True
+    # Also check if it's just a common route without leading slash
+    if "/" + path_clean in COMMON_PAGE_ROUTES:
         return True
     for pattern in NOISE_PATH_PATTERNS:
         if re.search(pattern, path, re.IGNORECASE):
@@ -149,16 +160,42 @@ def _redact_key(match: str) -> str:
 
 def _normalize_url(url: str, base_url: str = "") -> str:
     """Normalize a detected URL/path."""
+    # Clean escaped characters from JSON-encoded strings
+    url = url.replace('\\"', '').replace("\\'", "").replace("\\`", "")
+    url = url.replace("\\n", "").replace("\\r", "").replace("\\t", "")
+    # Strip trailing backslashes (from escaped quotes in JSON)
+    url = url.rstrip("\\")
+    # Strip trailing quotes that might have been captured
+    url = url.rstrip("'\"` ")
+    
     if url.startswith(("http://", "https://")):
         return url
     if url.startswith("//"):
         return "https:" + url
     if url.startswith("/") and base_url:
-        from urllib.parse import urlparse
-
         parsed = urlparse(base_url)
         return f"{parsed.scheme}://{parsed.netloc}{url}"
     return url
+
+
+def _deduplicate_endpoints(endpoints: List[ApiEndpoint]) -> List[ApiEndpoint]:
+    """Deduplicate endpoints, keeping the one with highest confidence."""
+    seen: Dict[str, ApiEndpoint] = {}
+    for ep in endpoints:
+        key = f"{ep.category}:{ep.url}"
+        if key in seen:
+            existing = seen[key]
+            # Merge evidence and keep higher confidence
+            for e in ep.evidence:
+                if e not in existing.evidence:
+                    existing.evidence.append(e)
+            existing.confidence = max(existing.confidence, ep.confidence)
+            # Prefer more specific method
+            if ep.method != "GET" and existing.method == "GET":
+                existing.method = ep.method
+        else:
+            seen[key] = ep
+    return list(seen.values())
 
 
 class ApiDetector:
@@ -175,7 +212,7 @@ class ApiDetector:
         report = ApiReport(url=url)
         headers = headers or {}
 
-        # Extract text content from HTML for JS analysis
+        # Extract JS content from HTML (inline scripts + script src URLs)
         js_content = cls._extract_js_content(html)
         full_content = html  # keep original for HTML-specific patterns
 
@@ -201,6 +238,12 @@ class ApiDetector:
             category="websocket", report=report, seen=seen_endpoints,
         )
 
+        # 4. Framework-specific routes (Next.js, Nuxt, SSR data endpoints)
+        cls._scan_patterns(
+            FRAMEWORK_ROUTES, js_content, full_content, headers, url,
+            category="framework_route", report=report, seen=seen_endpoints,
+        )
+
         # 4. API documentation
         cls._scan_doc_paths(html, url, report, seen_endpoints)
         cls._scan_patterns(
@@ -217,14 +260,15 @@ class ApiDetector:
         # 7. API key exposures
         cls._scan_keys(js_content, report, seen_keys)
 
-        # Sort endpoints by confidence descending
+        # Deduplicate and sort
+        report.endpoints = _deduplicate_endpoints(report.endpoints)
         report.endpoints.sort(key=lambda e: e.confidence, reverse=True)
 
         return report
 
     @classmethod
     def _extract_js_content(cls, html: str) -> str:
-        """Extract JavaScript content from HTML."""
+        """Extract JavaScript content from HTML, including inline scripts."""
         scripts: list[str] = []
 
         # Inline scripts
@@ -271,7 +315,7 @@ class ApiDetector:
 
                 for pattern in regex_list:
                     try:
-                        matches = re.finditer(pattern, content, re.IGNORECASE)
+                        matches = re.finditer(pattern, content, re.IGNORECASE | re.DOTALL)
                     except re.error:
                         continue
 
@@ -283,7 +327,19 @@ class ApiDetector:
                         if _is_noise_path(raw):
                             continue
 
+                        # Skip if the match is too short or looks like a file extension
+                        if len(raw) < 3:
+                            continue
+
                         endpoint_url = _normalize_url(raw, base_url)
+
+                        # Skip if it's clearly a static asset
+                        if any(endpoint_url.lower().endswith(ext) for ext in
+                               ('.js', '.css', '.png', '.jpg', '.jpeg', '.gif', '.svg',
+                                '.ico', '.woff', '.woff2', '.ttf', '.eot', '.map',
+                                '.pdf', '.zip', '.tar', '.gz')):
+                            continue
+
                         dedup_key = f"{category}:{endpoint_url}"
 
                         if dedup_key in seen:
@@ -295,9 +351,12 @@ class ApiDetector:
                                     existing.evidence.append(f"{source}:{tech_name}")
                             continue
 
+                        # Guess HTTP method from context
+                        method = cls._guess_method(content, raw, tech_name)
+
                         ep = ApiEndpoint(
                             url=endpoint_url,
-                            method=cls._guess_method(content, raw),
+                            method=method,
                             category=category,
                             source=source,
                             confidence=weight,
@@ -416,10 +475,16 @@ class ApiDetector:
                     end = min(len(content), m.end() + 40)
                     context = content[start:end].replace("\n", " ").strip()
 
-                    # For generic patterns, also check entropy
+                    # For generic patterns, check entropy to reduce false positives
                     if info["key_type"] in ("api_key", "bearer_token", "jwt"):
                         value = m.group(1) if m.lastindex and m.lastindex >= 1 else match_text
                         if _shannon_entropy(value) < 3.5:
+                            continue
+
+                    # Skip env_var_leak patterns that are too common
+                    if info["key_type"] == "env_leak":
+                        # Only report if there's actually a value assigned
+                        if "=" not in match_text and ":" not in match_text:
                             continue
 
                     report.key_exposures.append(
@@ -435,21 +500,29 @@ class ApiDetector:
                 continue
 
     @classmethod
-    def _guess_method(cls, content: str, path: str) -> str:
-        """Try to guess HTTP method from surrounding context."""
+    def _guess_method(cls, content: str, path: str, pattern_name: str) -> str:
+        """Try to guess HTTP method from surrounding context and pattern name."""
+        # If the pattern itself captured a method (from .get/.post/.put etc.)
+        if pattern_name in ("fetch_api", "axios_api", "client_get_post"):
+            # Look for method in the broader content near this path
+            idx = content.find(path)
+            if idx != -1:
+                context = content[max(0, idx - 200):idx + len(path) + 200].lower()
+                for method in ["post", "put", "delete", "patch"]:
+                    if f".{method}(" in context or f"method.*{method}" in context or f'"{method}"' in context:
+                        return method.upper()
+
         # Look for method near the path in content
         idx = content.find(path)
         if idx == -1:
             return "GET"
 
-        context = content[max(0, idx - 100) : idx + len(path) + 100].upper()
+        context = content[max(0, idx - 150):idx + len(path) + 150].lower()
 
-        if any(m in context for m in ["POST", ".POST(", "method.*POST"]):
-            return "POST"
-        if any(m in context for m in ["PUT", ".PUT(", "method.*PUT"]):
-            return "PUT"
-        if any(m in context for m in ["DELETE", ".DELETE(", "method.*DELETE"]):
-            return "DELETE"
-        if any(m in context for m in ["PATCH", ".PATCH(", "method.*PATCH"]):
-            return "PATCH"
+        # Check context patterns
+        for method, patterns in METHOD_CONTEXT_PATTERNS.items():
+            for pattern in patterns:
+                if re.search(pattern, context, re.IGNORECASE):
+                    return method
+
         return "GET"

@@ -12,8 +12,9 @@ from __future__ import annotations
 REST_PATTERNS: dict[str, dict[str, list[str]]] = {
     "fetch_api": {
         "js": [
-            r"fetch\s*\(\s*['\"\`]([^'\"\`\s]+)['\"\`]",
-            r"fetch\s*\(\s*(?:url|endpoint|baseUrl|apiUrl)\s*[+.]",
+            r"fetch\s*\(\s*['\"\`]([^'\"\`\s]{3,200})['\"\`]",
+            r"fetch\s*\(\s*(?:url|endpoint|baseUrl|apiUrl|apiBase)\s*[+.]",
+            r"fetch\s*\(\s*`([^`]{3,200})`",
         ],
         "html": [],
         "header": [],
@@ -22,8 +23,9 @@ REST_PATTERNS: dict[str, dict[str, list[str]]] = {
     },
     "axios_api": {
         "js": [
-            r"axios\.(get|post|put|delete|patch|head|options)\s*\(\s*['\"\`]([^'\"\`]+)['\"\`]",
+            r"axios\.\w+\s*\(\s*['\"\`]([^'\"\`]{3,200})['\"\`]",
             r"axios\s*\(\s*\{[^}]*url\s*:\s*['\"\`]([^'\"\`]+)['\"\`]",
+            r"axios\s*\(\s*['\"\`]([^'\"\`]{3,200})['\"\`]",
         ],
         "html": [],
         "header": [],
@@ -32,7 +34,19 @@ REST_PATTERNS: dict[str, dict[str, list[str]]] = {
     },
     "xhr_api": {
         "js": [
-            r"\.open\s*\(\s*['\"\`](GET|POST|PUT|DELETE|PATCH)['\"\`]\s*,\s*['\"\`]([^'\"\`]+)['\"\`]",
+            r"\.open\s*\(\s*['\"\`](GET|POST|PUT|DELETE|PATCH)['\"\`]\s*,\s*['\"\`]([^'\"\`]{3,200})['\"\`]",
+            r"\.open\s*\(\s*['\"\`]([^'\"\`]{3,200})['\"\`]",
+        ],
+        "html": [],
+        "header": [],
+        "meta": [],
+        "url": [],
+    },
+    "client_get_post": {
+        "js": [
+            r"\.(get|post|put|delete|patch)\s*\(\s*['\"\`]([^'\"\`]{3,200})['\"\`]",
+            r"client\s*\.\s*(get|post|put|delete|patch)\s*\(\s*['\"\`]([^'\"\`]{3,200})['\"\`]",
+            r"request\s*\(\s*['\"\`]([^'\"\`]{3,200})['\"\`]",
         ],
         "html": [],
         "header": [],
@@ -41,24 +55,113 @@ REST_PATTERNS: dict[str, dict[str, list[str]]] = {
     },
     "api_paths": {
         "js": [
-            r"['\"\`]/api/[a-zA-Z0-9/_-]{2,}['\"\`]",
-            r"['\"\`]/rest/[a-zA-Z0-9/_-]{2,}['\"\`]",
-            r"['\"\`]/v[0-9]+/[a-zA-Z0-9/_-]{2,}['\"\`]",
-            r"['\"\`]https?://[^'\"\`\s]+/api/[^'\"\`\s]+['\"\`]",
+            r"['\"\`]/api[a-zA-Z0-9/_\-\.]*['\"\`]",
+            r"['\"\`]/rest[a-zA-Z0-9/_\-\.]*['\"\`]",
+            r"['\"\`]/v[0-9]+/[a-zA-Z0-9/_\-\.]+['\"\`]",
         ],
         "html": [
-            r"(?:href|src|action)\s*=\s*[\"'][^\"']*/api/[^\"']*[\"']",
+            r"(?:href|src|action)\s*=\s*[\"'][^\"']*/api[^\"']*[\"']",
+            r"(?:href|src|action)\s*=\s*[\"'][^\"']*/v[0-9]+/[^\"']*[\"']",
+        ],
+        "header": [],
+        "meta": [],
+        "url": [],
+    },
+    "common_api_keywords": {
+        "js": [
+            r"['\"\`]/(?:login|signin|signup|register|auth|oauth|token|callback)(?:[?/][^'\"\`\s]*)?['\"\`]",
+            r"['\"\`]/(?:search|query|filter|autocomplete|suggest)(?:[?/][^'\"\`\s]*)?['\"\`]",
+            r"['\"\`]/(?:users?|accounts?|profiles?|members?)(?:[?/][^'\"\`\s]*)?['\"\`]",
+            r"['\"\`]/(?:products?|items?|catalog|inventory|orders?)(?:[?/][^'\"\`\s]*)?['\"\`]",
+            r"['\"\`]/(?:upload|import|export|download|files?|media)(?:[?/][^'\"\`\s]*)?['\"\`]",
+            r"['\"\`]/(?:admin|dashboard|settings?|config|preferences?)(?:[?/][^'\"\`\s]*)?['\"\`]",
+            r"['\"\`]/(?:notifications?|alerts?|messages?|inbox)(?:[?/][^'\"\`\s]*)?['\"\`]",
+            r"['\"\`]/(?:payments?|checkout|billing|invoices?|subscribe)(?:[?/][^'\"\`\s]*)?['\"\`]",
+            r"['\"\`]/(?:comments?|reviews?|ratings?|feedback)(?:[?/][^'\"\`\s]*)?['\"\`]",
+            r"['\"\`]/(?:posts?|articles?|blogs?|pages?|content)(?:[?/][^'\"\`\s]*)?['\"\`]",
+            r"['\"\`]/(?:categories?|tags?|labels?|topics?)(?:[?/][^'\"\`\s]*)?['\"\`]",
+            r"['\"\`]/(?:analytics|events?|metrics|stats|track)(?:[?/][^'\"\`\s]*)?['\"\`]",
+            r"['\"\`]/(?:search|websearch|find|lookup)(?:[?/][^'\"\`\s]*)?['\"\`]",
+            r"['\"\`]/(?:status|health|ping|version|info|meta)(?:[?/][^'\"\`\s]*)?['\"\`]",
+            r"['\"\`]/(?:graphql|gql|graphi?ql)(?:[?/][^'\"\`\s]*)?['\"\`]",
+        ],
+        "html": [
+            r"(?:href|src|action)\s*=\s*[\"'](?:/login|/signin|/signup|/register|/auth|/oauth|/token)[\"']",
+            r"(?:href|src|action)\s*=\s*[\"'](?:/search|/query|/filter|/autocomplete)[\"']",
+            r"(?:href|src|action)\s*=\s*[\"'](?:/users?|/accounts?|/profiles?|/members?)[\"']",
+            r"(?:href|src|action)\s*=\s*[\"'](?:/products?|/items?|/catalog|/orders?)[\"']",
+            r"(?:href|src|action)\s*=\s*[\"'](?:/upload|/import|/export|/files?|/media)[\"']",
+            r"(?:href|src|action)\s*=\s*[\"'](?:/admin|/dashboard|/settings?|/config)[\"']",
+            r"(?:href|src|action)\s*=\s*[\"'](?:/notifications?|/alerts?|/messages?)[\"']",
+            r"(?:href|src|action)\s*=\s*[\"'](?:/payments?|/checkout|/billing|/invoices?)[\"']",
+        ],
+        "header": [],
+        "meta": [],
+        "url": [],
+    },
+    "full_api_urls": {
+        "js": [
+            r"['\"\`](https?://api\.[a-zA-Z0-9.\-]+/[^\s\"'`\]{3,200})['\"\`]",
+            r"['\"\`](https?://[a-zA-Z0-9.\-]+/api/[^\s\"'`\]{3,200})['\"\`]",
+            r"['\"\`](https?://[a-zA-Z0-9.\-]+/v[0-9]+/[^\s\"'`\]{3,200})['\"\`]",
+        ],
+        "html": [
+            r"href\s*=\s*[\"'](https?://api\.[a-zA-Z0-9.\-]+/[^\"']+)[\"']",
+            r"src\s*=\s*[\"'](https?://api\.[a-zA-Z0-9.\-]+/[^\"']+)[\"']",
         ],
         "header": [],
         "meta": [
-            r"<meta[^>]*(?:name|property)\s*=\s*[\"'][^\"']*api[^\"']*[\"'][^>]*content\s*=\s*[\"']([^\"']+)[\"']",
+            r"<meta[^>]*content\s*=\s*[\"'](https?://api\.[a-zA-Z0-9.\-]+/[^\"']+)[\"']",
         ],
         "url": [],
     },
     "config_vars": {
         "js": [
-            r"(?:baseURL|BASE_URL|API_URL|API_BASE|apiUrl|apiBase|baseUrl|endpoint|ENDPOINT)\s*[:=]\s*['\"\`]([^'\"\`]+)['\"\`]",
-            r"(?:REACT_APP_API|VITE_API|NEXT_PUBLIC_API|VUE_APP_API)_\w+\s*[:=]\s*['\"\`]([^'\"\`]+)['\"\`]",
+            r"(?:baseURL|BASE_URL|API_URL|API_BASE|apiUrl|apiBase|baseUrl|ENDPOINT|API_ENDPOINT)\s*[:=]\s*['\"\`]([^'\"\`]{5,200})['\"\`]",
+            r"(?:REACT_APP_API|VITE_API|NEXT_PUBLIC_API|VUE_APP_API|NUXT_PUBLIC_API)\w*\s*[:=]\s*['\"\`]([^'\"\`]{5,200})['\"\`]",
+            r"(?:apiPrefix|apiPath|API_PREFIX|API_PATH)\s*[:=]\s*['\"\`]([^'\"\`]{3,200})['\"\`]",
+        ],
+        "html": [],
+        "header": [],
+        "meta": [],
+        "url": [],
+    },
+}
+
+# ── Framework-specific routes ──────────────────────────────────────────────────
+
+FRAMEWORK_ROUTES: dict[str, dict[str, list[str]]] = {
+    "nextjs_routes": {
+        "js": [
+            r"_next/data/[^'\"\`\s]+\.json",
+            r"getServerSideProps|getStaticProps|getStaticPaths",
+            r"next/router|next/navigation|useRouter",
+        ],
+        "html": [
+            r"/_next/data/[^\"]+\.json",
+            r"<script[^>]*id=\"__NEXT_DATA__\"[^>]*>",
+        ],
+        "header": [],
+        "meta": [],
+        "url": [],
+    },
+    "nuxt_routes": {
+        "js": [
+            r"_nuxt/|useAsyncData|useFetch|useLazyFetch",
+            r"fetch\(['\"]/_nuxt/data/",
+        ],
+        "html": [
+            r"/_nuxt/data/[^\"]+",
+            r"<script[^>]*id=\"__NUXT_DATA__\"[^>]*>",
+        ],
+        "header": [],
+        "meta": [],
+        "url": [],
+    },
+    "ssr_data_endpoints": {
+        "js": [
+            r"['\"\`]/(?:_next|_nuxt|__next|__nuxt)/data/[^'\"\`\s]+['\"\`]",
+            r"['\"\`]/api/(?:ssr|server|render)/[^'\"\`\s]+['\"\`]",
         ],
         "html": [],
         "header": [],
@@ -75,6 +178,7 @@ GRAPHQL_PATTERNS: dict[str, dict[str, list[str]]] = {
             r"['\"\`]/?graphql['\"\`]",
             r"['\"\`]/?gql['\"\`]",
             r"['\"\`]/?graphi?ql['\"\`]",
+            r"['\"\`][^'\"\`]*graphql[^'\"\`]*['\"\`]",
         ],
         "html": [
             r"(?:href|src|action)\s*=\s*[\"'][^\"']*graphql[^\"']*[\"']",
@@ -85,11 +189,12 @@ GRAPHQL_PATTERNS: dict[str, dict[str, list[str]]] = {
     },
     "graphql_client": {
         "js": [
-            r"ApolloClient|ApolloProvider|apollo-client",
-            r"useQuery|useMutation|useSubscription",
-            r"graphql-request|urql|relay-runtime",
+            r"ApolloClient|ApolloProvider|apollo-client|@apollo/client",
+            r"useQuery|useMutation|useSubscription|useLazyQuery",
+            r"graphql-request|urql|relay-runtime|@urql",
             r"createClient.*graphql|new.*ApolloClient",
-            r"gql`|graphql`",
+            r"gql`|graphql`|`query\s*\{",
+            r"graphql-ws|subscriptions-transport-ws",
         ],
         "html": [],
         "header": [],
@@ -98,10 +203,10 @@ GRAPHQL_PATTERNS: dict[str, dict[str, list[str]]] = {
     },
     "graphql_queries": {
         "js": [
-            r"query\s*\{",
+            r"query\s*\{[\s\S]{0,50}(?:__schema|__typename|id\b)",
             r"mutation\s*\{",
             r"subscription\s*\{",
-            r"__schema",
+            r"__schema\s*\{",
             r"__typename",
         ],
         "html": [],
@@ -116,7 +221,7 @@ GRAPHQL_PATTERNS: dict[str, dict[str, list[str]]] = {
 WEBSOCKET_PATTERNS: dict[str, dict[str, list[str]]] = {
     "websocket_urls": {
         "js": [
-            r"['\"\`]wss?://[^'\"\`\s]+['\"\`]",
+            r"['\"\`]wss?://[^'\"\`\s]{5,200}['\"\`]",
             r"new\s+WebSocket\s*\(",
             r"new\s+WebSocketServer\s*\(",
             r"\.connect\s*\(\s*['\"\`]wss?://",
@@ -129,9 +234,11 @@ WEBSOCKET_PATTERNS: dict[str, dict[str, list[str]]] = {
     "socket_io": {
         "js": [
             r"socket\.io|io\s*\(\s*['\"\`]https?://",
-            r"sockjs|stompjs|STOMP",
-            r"socket\.on\s*\(\s*['\"\`]message['\"\`]",
+            r"sockjs|stompjs|STOMP|SockJS",
+            r"socket\.on\s*\(\s*['\"\`]",
             r"socket\.emit\s*\(",
+            r"\.on\s*\(\s*['\"\`]message['\"\`]",
+            r"\.on\s*\(\s*['\"\`]connect['\"\`]",
         ],
         "html": [],
         "header": [],
@@ -170,6 +277,7 @@ DOC_PATHS: list[str] = [
     "/redoc.yml",
     "/springdoc/swagger-ui.html",
     "/actuator",
+    "/.well-known/openapi",
 ]
 
 DOC_SIGNATURES: dict[str, dict[str, list[str]]] = {
@@ -179,13 +287,18 @@ DOC_SIGNATURES: dict[str, dict[str, list[str]]] = {
             r'"openapi"\s*:\s*"3\.\d+\.\d+',
             r"SwaggerUIBundle|SwaggerUIStandalonePreset",
             r"swagger-ui",
+            r"swaggerJson|swaggerDoc|apiSpec",
         ],
         "html": [
             r"<redoc\s+spec-url=",
             r"swagger-ui",
+            r"api-documentation|api-reference",
         ],
         "header": [],
-        "meta": [],
+        "meta": [
+            r"<meta[^>]*content\s*=\s*[\"'][^\"']*swagger[^\"']*[\"']",
+            r"<meta[^>]*content\s*=\s*[\"'][^\"']*openapi[^\"']*[\"']",
+        ],
         "url": [],
     },
     "redoc": {
@@ -220,7 +333,9 @@ THIRD_PARTY_DOMAINS: dict[str, str] = {
     r"api\.twitter\.com": "twitter",
     r"api\.x\.com": "twitter",
     r"api\.github\.com": "github",
+    r"github\.com.*api": "github",
     r"api\.slack\.com": "slack",
+    r"slack\.com.*api": "slack",
     r"api\.amazonaws\.com": "aws",
     r"execute-api\..*\.amazonaws\.com": "aws_lambda",
     r"api\.firebaseio\.com": "firebase",
@@ -247,9 +362,8 @@ THIRD_PARTY_DOMAINS: dict[str, str] = {
     r"freshchat\.com": "freshchat",
     r"sentry\.io": "sentry",
     r"browser\.sentry-cdn\.com": "sentry",
-    r"js\.heatmap\.me": "heatmap",
-    r"fullstory\.com": "fullstory",
     r"hotjar\.com": "hotjar",
+    r"fullstory\.com": "fullstory",
     r"cdn\.mixpanel\.com": "mixpanel",
     r"track\.customer\.io": "customerio",
     r"api\.postmarkapp\.com": "postmark",
@@ -265,6 +379,10 @@ THIRD_PARTY_DOMAINS: dict[str, str] = {
     r"api\.vercel\.com": "vercel",
     r"api\.netlify\.com": "netlify",
     r"api\.cloudflare\.com": "cloudflare",
+    r"api\.githubcopilot\.com": "github_copilot",
+    r"api\.github\.com": "github",
+    r"objects\.githubusercontent\.com": "github",
+    r"github\.githubassets\.com": "github",
 }
 
 # ── SDK/script import signatures ──────────────────────────────────────────────
@@ -359,18 +477,6 @@ KEY_PATTERNS: dict[str, dict[str, str]] = {
         "key_type": "oauth_secret",
         "severity": "high",
     },
-    "facebook_token": {
-        "regex": r"EAACEdEose0cBA[0-9A-Za-z]+",
-        "provider": "facebook",
-        "key_type": "access_token",
-        "severity": "high",
-    },
-    "heroku_api_key": {
-        "regex": r"HEROKU_API_KEY\s*[:=]\s*['\"\`]([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})['\"\`]",
-        "provider": "heroku",
-        "key_type": "api_key",
-        "severity": "high",
-    },
 }
 
 # ── Generic credential patterns ───────────────────────────────────────────────
@@ -454,6 +560,44 @@ NOISE_STRINGS: set[str] = {
     "FIXME",
 }
 
+# ── Common page routes (not API endpoints) ────────────────────────────────────
+
+COMMON_PAGE_ROUTES: set[str] = {
+    "/blog",
+    "/about",
+    "/contact",
+    "/careers",
+    "/pricing",
+    "/docs",
+    "/changelog",
+    "/features",
+    "/products",
+    "/solutions",
+    "/company",
+    "/team",
+    "/partners",
+    "/customers",
+    "/case-studies",
+    "/events",
+    "/webinars",
+    "/podcast",
+    "/newsletter",
+    "/privacy",
+    "/terms",
+    "/security",
+    "/status",
+    "/support",
+    "/help",
+    "/community",
+    "/forum",
+    "/feedback",
+    "/roadmap",
+    "/open-source",
+    "/license",
+    "/sitemap",
+    "/robots.txt",
+}
+
 # ── Path validation noise patterns (reject these) ────────────────────────────
 
 NOISE_PATH_PATTERNS: list[str] = [
@@ -466,7 +610,7 @@ NOISE_PATH_PATTERNS: list[str] = [
     r"/vendor\.",         # vendor bundles
     r"/polyfill",         # polyfills
     r"/webpack",          # webpack internals
-    r"/ Type /Font",      # PDF structure
+    r" Type /Font",       # PDF structure
     r"/xl/",              # Excel internals
     r"/docProps/",        # Office internals
     r"/_next/",           # Next.js internals
@@ -488,3 +632,32 @@ NOISE_PATH_PATTERNS: list[str] = [
     r"\.eot",
     r"\.map",
 ]
+
+# ── HTTP method detection context patterns ────────────────────────────────────
+
+METHOD_CONTEXT_PATTERNS: dict[str, list[str]] = {
+    "POST": [
+        r"\.post\s*\(",
+        r"method\s*:\s*['\"]POST['\"]",
+        r"['\"]POST['\"]",
+        r"submit|create|add|insert|register|login|signup|upload|send",
+    ],
+    "PUT": [
+        r"\.put\s*\(",
+        r"method\s*:\s*['\"]PUT['\"]",
+        r"['\"]PUT['\"]",
+        r"update|modify|replace|edit",
+    ],
+    "DELETE": [
+        r"\.delete\s*\(",
+        r"method\s*:\s*['\"]DELETE['\"]",
+        r"['\"]DELETE['\"]",
+        r"remove|destroy|delete",
+    ],
+    "PATCH": [
+        r"\.patch\s*\(",
+        r"method\s*:\s*['\"]PATCH['\"]",
+        r"['\"]PATCH['\"]",
+        r"patch|partial",
+    ],
+}
