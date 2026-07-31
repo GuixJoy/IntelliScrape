@@ -36,6 +36,7 @@ No more switching between `requests`, `playwright`, and `selenium`. No more debu
 - Export to JSON, CSV, Excel, SQLite, Text, Markdown
 - Async support for concurrent scraping
 - Link checking (status verification, categorization, broken link detection)
+- **Website mirroring** (HTTrack-ported, WARC/ZIP export, offline browsing)
 
 ---
 
@@ -209,6 +210,23 @@ intelliscrape [URL] [OPTIONS]
 | `--download-images` | Download all images |
 | `--download-dir DIR` | Download directory (default: downloads) |
 
+### Mirror (HTTrack-style)
+
+| Flag | Description |
+|---|---|
+| `--mirror` | Mirror entire website for offline browsing |
+| `--mirror-depth N` | Max recursion depth (default: 5) |
+| `--mirror-output DIR` | Output directory (default: ./mirror) |
+| `--mirror-zip FILE` | Also create ZIP archive |
+| `--mirror-warc FILE` | Also create WARC archive |
+| `--mirror-delay SEC` | Delay between requests (default: 0.5) |
+| `--mirror-exclude PAT` | Exclude URL patterns (repeatable) |
+| `--mirror-include PAT` | Include URL patterns (repeatable) |
+| `--mirror-engine ENG` | Engine: static, playwright, camoufox, nodriver, auto |
+| `--mirror-proxy URL` | Proxy for mirroring |
+| `--mirror-update` | Resume/update existing mirror |
+| `--no-robots` | Ignore robots.txt |
+
 ### Export
 
 | Flag | Description |
@@ -251,6 +269,21 @@ intelliscrape https://protected-site.com --manual-captcha
 
 # Force browser
 intelliscrape https://react-app.com --force-browser
+
+# Mirror entire site
+intelliscrape https://example.com --mirror --mirror-depth 3 --mirror-output ./backup
+
+# Mirror + ZIP
+intelliscrape https://example.com --mirror --mirror-zip site.zip
+
+# Mirror + WARC
+intelliscrape https://example.com --mirror --mirror-warc archive.warc.gz
+
+# Mirror with proxy
+intelliscrape https://example.com --mirror --mirror-proxy socks5://proxy:1080
+
+# Mirror excluded patterns
+intelliscrape https://example.com --mirror --mirror-exclude "*.pdf" --mirror-exclude "/admin/*"
 ```
 
 ---
@@ -528,6 +561,152 @@ DataExporter.export(data, format="json", file="output.json")
 
 ---
 
+### `mirror()` — Website Mirroring
+
+Download entire websites for offline browsing with URL rewriting, robots.txt compliance, and archive support.
+
+```python
+from intelliscrape import SiteMirror, MirrorConfig
+
+# Quick mirror
+from intelliscrape import mirror_site
+result = mirror_site("https://example.com", max_depth=3)
+```
+
+#### `mirror()` — Convenience Function
+
+```python
+from intelliscrape import mirror_site
+
+result = mirror_site(
+    url="https://example.com",
+    output_dir="./mirror",
+    max_depth=5,
+    save_zip="site.zip",
+    save_warc="archive.warc.gz",
+)
+```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `url` | str | required | Starting URL |
+| `output_dir` | str | `./mirror` | Output directory |
+| `max_depth` | int | 5 | Max link-following depth |
+| `save_zip` | str | None | Create ZIP archive at path |
+| `save_warc` | str | None | Create WARC archive at path |
+| `exclude_patterns` | list | [] | URL exclude patterns |
+| `include_patterns` | list | [] | URL include patterns |
+| `delay` | float | 0.5 | Delay between requests (seconds) |
+| `respect_robots` | bool | True | Respect robots.txt |
+| `engine` | str | `static` | Scraping engine |
+| `proxy` | str | None | Proxy URL |
+
+Returns `MirrorResult`:
+- `result.pages_downloaded` — Number of HTML pages
+- `result.assets_downloaded` — Number of assets (CSS, JS, images)
+- `result.total_bytes` — Total bytes downloaded
+- `result.elapsed_seconds` — Time taken
+- `result.errors` — Number of errors
+- `result.output_dir` — Output directory path
+- `result.zip_path` — ZIP archive path (if created)
+- `result.warc_path` — WARC archive path (if created)
+
+#### `SiteMirror` — Full Control
+
+```python
+from intelliscrape.track import SiteMirror, MirrorConfig
+
+config = MirrorConfig(
+    url="https://example.com",
+    max_depth=3,
+    output_dir="./my-mirror",
+    exclude_patterns=["*.pdf", "/admin/*"],
+    engine="static",
+    delay=0.5,
+    respect_robots=True,
+    url_mode="relative",  # relative | absolute | keep_original
+)
+
+m = SiteMirror(config)
+result = m.run(save_zip="mirror.zip", save_warc="mirror.warc.gz")
+```
+
+#### `MirrorConfig` — All Options
+
+```python
+from intelliscrape.track import MirrorConfig
+
+config = MirrorConfig(
+    # What to mirror
+    url="https://example.com",
+    max_depth=5,
+    max_pages=10000,
+    max_file_size=50 * 1024 * 1024,  # 50 MB
+
+    # Scope
+    travel="same_domain",  # same_address | same_domain | same_tld | everywhere
+
+    # What to fetch
+    fetch_html=True,
+    fetch_css=True,
+    fetch_js=True,
+    fetch_images=True,
+    fetch_fonts=True,
+    fetch_media=True,
+    fetch_documents=True,
+
+    # Filtering
+    include_patterns=[],
+    exclude_patterns=["*.pdf"],
+
+    # Output
+    output_dir="./mirror",
+    url_mode="relative",
+    generate_index=True,
+
+    # Resume
+    use_cache=True,
+    update_mode=False,
+
+    # Politeness
+    delay=0.5,
+    max_concurrent=5,
+    respect_robots=True,
+
+    # Engine & proxy
+    engine="static",
+    proxy=None,
+    cookies=None,
+)
+```
+
+#### CLI Examples
+
+```bash
+# Basic mirror
+intelliscrape https://example.com --mirror
+
+# Depth 3, custom output
+intelliscrape https://example.com --mirror --mirror-depth 3 --mirror-output ./site
+
+# With ZIP
+intelliscrape https://example.com --mirror --mirror-zip backup.zip
+
+# With WARC (web archive format)
+intelliscrape https://example.com --mirror --mirror-warc archive.warc.gz
+
+# With proxy
+intelliscrape https://example.com --mirror --mirror-proxy socks5://proxy:1080
+
+# Exclude patterns
+intelliscrape https://example.com --mirror --mirror-exclude "*.pdf" --mirror-exclude "/api/*"
+
+# Resume interrupted mirror
+intelliscrape https://example.com --mirror --mirror-update
+```
+
+---
+
 ### `Downloader` — File Downloads
 
 ```python
@@ -781,6 +960,51 @@ intelliscrape https://site.com --export csv -o data.csv
 intelliscrape https://site.com --export json -o data.json
 ```
 
+### Website Mirroring
+
+Download complete websites for offline browsing with URL rewriting and archive support.
+
+```python
+from intelliscrape import mirror_site
+
+# Basic mirror
+result = mirror_site("https://example.com", max_depth=3)
+
+# With ZIP archive
+result = mirror_site("https://example.com", save_zip="site.zip")
+
+# Full options
+from intelliscrape.track import SiteMirror, MirrorConfig
+
+config = MirrorConfig(
+    url="https://example.com",
+    max_depth=3,
+    output_dir="./mirror",
+    exclude_patterns=["*.pdf", "/admin/*"],
+    engine="static",
+    delay=0.5,
+)
+m = SiteMirror(config)
+result = m.run(save_zip="mirror.zip", save_warc="mirror.warc.gz")
+```
+
+```bash
+# Mirror site
+intelliscrape https://example.com --mirror
+
+# Mirror with depth and output dir
+intelliscrape https://example.com --mirror --mirror-depth 3 --mirror-output ./backup
+
+# Mirror + ZIP
+intelliscrape https://example.com --mirror --mirror-zip backup.zip
+
+# Mirror + WARC (web archive format)
+intelliscrape https://example.com --mirror --mirror-warc archive.warc.gz
+
+# Mirror with proxy
+intelliscrape https://example.com --mirror --mirror-proxy socks5://proxy:1080
+```
+
 ---
 
 ## Examples
@@ -927,6 +1151,17 @@ intelliscrape/
 
     session/                # Session persistence
         __init__.py         # SessionManager
+
+    track/                  # Website mirroring (HTTrack port)
+        __init__.py         # Package exports
+        config.py           # MirrorConfig (30+ options)
+        mirror.py           # SiteMirror engine (async workers, WARC/ZIP)
+        parser.py           # AssetDiscovery (HTML/CSS/JS extraction)
+        rewriter.py         # URLRewriter (relative/absolute paths)
+        naming.py           # SaveNamer (URL→filesystem mapping)
+        cache.py            # MirrorCache (resume support)
+        filters.py          # URLFilter (include/exclude patterns)
+        robots.py           # RobotsParser (RFC 9309 compliance)
 ```
 
 ---

@@ -174,6 +174,33 @@ Examples:
     parser.add_argument("--download-images", action="store_true", help="Download all images")
     parser.add_argument("--download-dir", default="downloads", help="Download directory")
 
+    # Mirror (HTTrack-style full site download)
+    parser.add_argument("--mirror", action="store_true",
+                       help="Mirror entire website for offline browsing (HTTrack-style)")
+    parser.add_argument("--mirror-depth", type=int, default=5,
+                       help="Max recursion depth for mirroring (default: 5)")
+    parser.add_argument("--mirror-output", default="./mirror",
+                       help="Output directory for mirror (default: ./mirror)")
+    parser.add_argument("--mirror-zip", type=str, default=None,
+                       help="Also create a ZIP archive at this path")
+    parser.add_argument("--mirror-delay", type=float, default=0.5,
+                       help="Delay between requests in seconds (default: 0.5)")
+    parser.add_argument("--mirror-exclude", action="append", default=[],
+                       help="Exclude patterns (repeatable, e.g. '*.pdf')")
+    parser.add_argument("--mirror-include", action="append", default=[],
+                       help="Include patterns (repeatable, e.g. '/docs/*')")
+    parser.add_argument("--mirror-update", action="store_true",
+                       help="Update existing mirror (resume)")
+    parser.add_argument("--mirror-engine", default="static",
+                       choices=["static", "playwright", "camoufox", "nodriver", "auto"],
+                       help="Engine for mirroring (default: static)")
+    parser.add_argument("--mirror-proxy", type=str, default=None,
+                       help="Proxy URL for mirroring (e.g. socks5://host:port)")
+    parser.add_argument("--mirror-warc", type=str, default=None,
+                       help="Also create a WARC archive at this path")
+    parser.add_argument("--no-robots", action="store_true",
+                       help="Ignore robots.txt")
+
     # Force browser
     parser.add_argument("--force-browser", action="store_true", help="Force browser engine")
 
@@ -207,6 +234,8 @@ Examples:
             return _paginate(args)
         elif args.search:
             return _search(args)
+        elif args.mirror:
+            return _mirror(args)
         elif args.download or args.download_images:
             return _download(args)
         else:
@@ -535,6 +564,67 @@ def _tech_report(args) -> int:
         with open(args.output, "w", encoding="utf-8") as f:
             _json.dump(tech.to_dict(), f, indent=2, ensure_ascii=False)
         console.print(f"[green]Saved tech report to {args.output}[/green]")
+
+    return 0
+
+
+def _mirror(args) -> int:
+    """Mirror entire website for offline browsing."""
+    from .track.mirror import mirror as mirror_site
+
+    url = args.url.rstrip("/")
+    console.print(f"[bold cyan]Mirroring:[/bold cyan] {url}")
+    console.print(f"[dim]Output: {args.mirror_output}[/dim]")
+    console.print(f"[dim]Depth: {args.mirror_depth}, Delay: {args.mirror_delay}s[/dim]")
+
+    extra = {
+        "delay": args.mirror_delay,
+        "respect_robots": not args.no_robots,
+        "update_mode": args.mirror_update,
+        "engine": args.mirror_engine,
+    }
+    if args.mirror_exclude:
+        extra["exclude_patterns"] = args.mirror_exclude
+    if args.mirror_include:
+        extra["include_patterns"] = args.mirror_include
+    if args.mirror_proxy:
+        extra["proxy"] = args.mirror_proxy
+
+    result = mirror_site(
+        url, output_dir=args.mirror_output, max_depth=args.mirror_depth,
+        save_zip=args.mirror_zip, save_warc=args.mirror_warc, **extra,
+    )
+
+    console.print()
+    size_mb = result.total_bytes / (1024 * 1024)
+    elapsed = result.elapsed_seconds
+    speed = result.total_bytes / elapsed if elapsed > 0 else 0
+
+    if result.errors == 0:
+        console.print(Panel(
+            f"[green]Mirror complete![/green]\n"
+            f"Pages: {result.pages_downloaded} | Assets: {result.assets_downloaded}\n"
+            f"Errors: {result.errors} | Size: {size_mb:.1f} MB\n"
+            f"Time: {elapsed:.1f}s | Speed: {speed/1024:.1f} KB/s\n"
+            f"Output: {result.output_dir}",
+            title="Mirror Result",
+            border_style="green",
+        ))
+    else:
+        console.print(Panel(
+            f"[yellow]Mirror completed with errors[/yellow]\n"
+            f"Pages: {result.pages_downloaded} | Assets: {result.assets_downloaded}\n"
+            f"Errors: {result.errors} | Size: {size_mb:.1f} MB\n"
+            f"Time: {elapsed:.1f}s | Speed: {speed/1024:.1f} KB/s\n"
+            f"Output: {result.output_dir}",
+            title="Mirror Result",
+            border_style="yellow",
+        ))
+
+    if result.zip_path:
+        console.print(f"[green]ZIP created: {result.zip_path}[/green]")
+    if result.warc_path:
+        console.print(f"[green]WARC created: {result.warc_path}[/green]")
 
     return 0
 

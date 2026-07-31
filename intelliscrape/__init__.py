@@ -65,6 +65,7 @@ Website Intelligence:
 
 from .core import IntelliScrape, scrape
 from .crawler import crawl, CrawlResult, ScrapeResult
+from .track import SiteMirror, MirrorConfig, mirror as mirror_site
 from .intelligent import SiteAnalyzer, SiteAnalysis, SiteType, ProtectionLevel, SmartRateLimiter
 from .proxy import (
     ProxyConfig,
@@ -112,7 +113,7 @@ from .link_checker import (
 from .tech.extractor import TechStack, TechInfo, TechStackExtractor
 from .api_detector.extractor import ApiReport, ApiEndpoint, ApiKeyExposure, ApiDetector
 
-__version__ = "2.8.0"
+__version__ = "2.9.0"
 
 __all__ = [
     # Main API
@@ -211,4 +212,8 @@ __all__ = [
     "ApiDetector",
     # Re-exports
     "ScrapeResult",
+    # HTTrack mirroring
+    "SiteMirror",
+    "MirrorConfig",
+    "mirror_site",
 ]
