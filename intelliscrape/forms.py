@@ -78,61 +78,6 @@ class FormSubmitter:
         
         return forms
     
-    def find_form_by_id(self, html: str, form_id: str, base_url: str = "") -> Optional[Form]:
-        """Find a form by its ID."""
-        soup = BeautifulSoup(html, "html.parser")
-        form_tag = soup.find("form", id=form_id)
-        
-        if form_tag:
-            action = form_tag.get("action", "")
-            if action and base_url:
-                action = urljoin(base_url, action)
-            
-            method = form_tag.get("method", "GET").upper()
-            enctype = form_tag.get("enctype", "application/x-www-form-urlencoded")
-            
-            fields = []
-            for input_tag in form_tag.find_all(["input", "select", "textarea"]):
-                field = self._parse_field(input_tag)
-                if field:
-                    fields.append(field)
-            
-            return Form(
-                action=action,
-                method=method,
-                fields=fields,
-                enctype=enctype,
-            )
-        return None
-    
-    def find_form_by_class(self, html: str, class_name: str, base_url: str = "") -> List[Form]:
-        """Find forms by class name."""
-        soup = BeautifulSoup(html, "html.parser")
-        forms = []
-        
-        for form_tag in soup.find_all("form", class_=class_name):
-            action = form_tag.get("action", "")
-            if action and base_url:
-                action = urljoin(base_url, action)
-            
-            method = form_tag.get("method", "GET").upper()
-            enctype = form_tag.get("enctype", "application/x-www-form-urlencoded")
-            
-            fields = []
-            for input_tag in form_tag.find_all(["input", "select", "textarea"]):
-                field = self._parse_field(input_tag)
-                if field:
-                    fields.append(field)
-            
-            forms.append(Form(
-                action=action,
-                method=method,
-                fields=fields,
-                enctype=enctype,
-            ))
-        
-        return forms
-    
     def find_search_form(self, html: str, base_url: str = "") -> Optional[Form]:
         """Try to find the search form (common patterns)."""
         soup = BeautifulSoup(html, "html.parser")

@@ -97,10 +97,9 @@ from .forms import FormSubmitter, Form, FormField
 from .pagination import Paginator, PageInfo
 from .export import DataExporter
 from .downloader import Downloader, DownloadResult
-from .retry import SmartRetry, RetryConfig, RetryAttempt
 from .cookies import CookieManager, CookieData
 from .interceptor import RequestInterceptor, ResponseModifier, InterceptedRequest, InterceptedResponse
-from .ip_manager import IPManager, NaturalRotator, Proxy, ProxyType, IPInfo
+from .ip_manager import IPManager
 from .link_checker import (
     check_links,
     collect_links,
@@ -113,7 +112,7 @@ from .link_checker import (
 from .tech.extractor import TechStack, TechInfo, TechStackExtractor
 from .api_detector.extractor import ApiReport, ApiEndpoint, ApiKeyExposure, ApiDetector
 
-__version__ = "2.9.1"
+__version__ = "3.0.0"
 
 __all__ = [
     # Main API
@@ -175,10 +174,6 @@ __all__ = [
     # Downloads
     "Downloader",
     "DownloadResult",
-    # Retry
-    "SmartRetry",
-    "RetryConfig",
-    "RetryAttempt",
     # Cookies
     "CookieManager",
     "CookieData",
@@ -189,10 +184,6 @@ __all__ = [
     "InterceptedResponse",
     # IP Management
     "IPManager",
-    "NaturalRotator",
-    "Proxy",
-    "ProxyType",
-    "IPInfo",
     # Link checking
     "check_links",
     "collect_links",

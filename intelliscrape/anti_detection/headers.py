@@ -106,9 +106,3 @@ class HeaderManager:
         headers.update(self.custom_headers)
 
         return headers
-
-    def get_random_ua(self) -> str:
-        """Get a random User-Agent string."""
-        if self.browser == "firefox":
-            return random.choice(_FIREFOX_PROFILES)["User-Agent"]
-        return random.choice(_CHROME_PROFILES)["User-Agent"]

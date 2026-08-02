@@ -179,8 +179,6 @@ class Downloader:
     VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
     AUDIO_EXTENSIONS = {".mp3", ".wav", ".ogg", ".flac", ".aac"}
     
-    ALL_EXTENSIONS = IMAGE_EXTENSIONS | DOCUMENT_EXTENSIONS | ARCHIVE_EXTENSIONS | VIDEO_EXTENSIONS | AUDIO_EXTENSIONS
-    
     def __init__(self, session: Optional[requests.Session] = None):
         self.session = session or requests.Session()
         self.session.headers.update({
@@ -273,51 +271,6 @@ class Downloader:
                 success=False,
                 error=str(e),
             )
-    
-    def download_many(
-        self,
-        urls: List[str],
-        output_dir: str = "downloads",
-        *,
-        max_concurrent: int = 5,
-        timeout: int = 60,
-        progress_callback: Optional[Callable[[str, int, int], None]] = None,
-    ) -> List[DownloadResult]:
-        """Download multiple files.
-        
-        Parameters
-        ----------
-        urls : list of str
-            URLs to download.
-        output_dir : str
-            Output directory.
-        max_concurrent : int
-            Maximum concurrent downloads (not used in sync version).
-        timeout : int
-            Request timeout.
-        progress_callback : callable, optional
-            Callback with (url, downloaded, total) bytes.
-            
-        Returns
-        -------
-        list of DownloadResult
-            Download results.
-        """
-        results = []
-        for i, url in enumerate(urls):
-            def url_progress(downloaded, total):
-                if progress_callback:
-                    progress_callback(url, downloaded, total)
-            
-            result = self.download(
-                url,
-                output_dir,
-                timeout=timeout,
-                progress_callback=url_progress,
-            )
-            results.append(result)
-        
-        return results
     
     def download_images(
         self,
@@ -439,22 +392,3 @@ class Downloader:
             filename = f"download_{url_hash}"
         
         return filename
-    
-    def get_file_type(self, url: str) -> str:
-        """Get file type from URL."""
-        parsed = urlparse(url)
-        path = unquote(parsed.path)
-        ext = os.path.splitext(path)[1].lower()
-        
-        if ext in self.IMAGE_EXTENSIONS:
-            return "image"
-        elif ext in self.DOCUMENT_EXTENSIONS:
-            return "document"
-        elif ext in self.ARCHIVE_EXTENSIONS:
-            return "archive"
-        elif ext in self.VIDEO_EXTENSIONS:
-            return "video"
-        elif ext in self.AUDIO_EXTENSIONS:
-            return "audio"
-        else:
-            return "unknown"

@@ -378,23 +378,6 @@ class Authenticator:
         # Default to base URL
         return base_url
 
-    def _extract_csrf(self, html: str) -> Optional[str]:
-        """Extract CSRF token from HTML."""
-        # Common CSRF patterns
-        patterns = [
-            r'<input[^>]*name=["\']csrf_token["\'][^>]*value=["\']([^"\']+)["\']',
-            r'<input[^>]*name=["\']_token["\'][^>]*value=["\']([^"\']+)["\']',
-            r'<input[^>]*name=["\']csrf["\'][^>]*value=["\']([^"\']+)["\']',
-            r'<meta[^>]*name=["\']csrf-token["\'][^>]*content=["\']([^"\']+)["\']',
-        ]
-
-        for pattern in patterns:
-            match = re.search(pattern, html, re.IGNORECASE)
-            if match:
-                return match.group(1)
-
-        return None
-
     def _is_spa(self, html: str) -> bool:
         """Detect if the page is a Single Page Application (SPA)."""
         spa_indicators = [

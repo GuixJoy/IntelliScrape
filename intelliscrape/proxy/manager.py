@@ -25,7 +25,6 @@ class ProxyProvider(Enum):
     SCRAPERAPI = "scraperapi"
     OXYLABS = "oxylabs"
     SMARTPROXY = "smartproxy"
-    IPROYAL = "iproyal"
     USERPROXY = "userproxy"  # User provides their own proxy
 
 

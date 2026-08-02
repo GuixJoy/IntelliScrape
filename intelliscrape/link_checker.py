@@ -21,12 +21,6 @@ from .downloader import TimeoutType, create_session, download_html
 
 
 # ---------------------------------------------------------------------------
-# Backward-compatible alias kept for any external callers.
-# ---------------------------------------------------------------------------
-LinkCheckResult = Tuple[str, int]
-
-
-# ---------------------------------------------------------------------------
 # Link classification helpers
 # ---------------------------------------------------------------------------
 
@@ -311,34 +305,3 @@ def check_links(
     finally:
         if session is None:
             sess.close()
-
-
-# ---------------------------------------------------------------------------
-# Legacy two-tuple API (kept for backward compatibility)
-# ---------------------------------------------------------------------------
-
-def check_links_legacy(
-    url: str,
-    *,
-    timeout: TimeoutType | None = None,
-    allowed_statuses: Sequence[int] | None = None,
-    session: Session | None = None,
-    create_session_fn: Callable[[], Session] = create_session,
-    downloader: Callable[[str, TimeoutType | None], str] = download_html,
-    ignore_external: bool = False,
-    log: Callable[[str], None] | None = None,
-) -> Tuple[bool, List[LinkCheckResult]]:
-    """Legacy wrapper returning ``(all_ok, broken_links)`` tuple."""
-    report = check_links(
-        url,
-        timeout=timeout,
-        allowed_statuses=allowed_statuses,
-        session=session,
-        create_session_fn=create_session_fn,
-        downloader=downloader,
-        ignore_external=ignore_external,
-        max_workers=1,
-        log=log,
-    )
-    broken = [(r.url, r.status_code) for r in report.links if not r.is_ok]
-    return (not broken, broken)
