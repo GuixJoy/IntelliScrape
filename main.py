@@ -23,6 +23,34 @@ except ImportError:
     curl_requests = None
     CURL_AVAILABLE = False
 
+CLOUDFLARE_MARKERS = [
+    "checking your browser", "just a moment", "challenge-platform",
+    "cf-browser-verification", "enable javascript", "verify you are human",
+    "security check", "please wait", "turnstile", "challenge.js",
+]
+
+
+def _is_cloudflare_blocked(html: str) -> bool:
+    """Check if response is a Cloudflare challenge page."""
+    lower = html.lower()
+    return any(marker in lower for marker in CLOUDFLARE_MARKERS)
+
+
+STEALTH_JS = """
+Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});
+Object.defineProperty(navigator, 'languages', {get: () => ['en-US','en']});
+window.chrome = {runtime: {}};
+Object.defineProperty(navigator, 'permissions', {
+    get: () => ({query: (p) => Promise.resolve({state: 'denied', onchange: null})})
+});
+Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 8});
+Object.defineProperty(navigator, 'deviceMemory', {get: () => 8});
+Object.defineProperty(navigator, 'connection', {
+    get: () => ({rtt: 50, downlink: 10, effectiveType: '4g', saveData: false})
+});
+"""
+
 try:
     import psycopg
     DB_AVAILABLE = True
@@ -192,9 +220,9 @@ class TechResponse(BaseModel):
 
 
 def scrape_basic(url: str, raw: bool = False, render_js: bool = False) -> str:
-    """Scrape using curl_cffi (TLS impersonation) with optional Playwright JS rendering."""
+    """Scrape using curl_cffi with auto-fallback to stealth browser for Cloudflare."""
     if render_js:
-        return scrape_with_playwright(url, raw)
+        return _scrape_with_stealth(url, raw)
 
     if not CURL_AVAILABLE:
         raise Exception("curl_cffi not available - cannot scrape")
@@ -202,7 +230,7 @@ def scrape_basic(url: str, raw: bool = False, render_js: bool = False) -> str:
     try:
         resp = curl_requests.get(
             url,
-            impersonate="chrome",
+            impersonate="chrome131",
             timeout=30,
             allow_redirects=True,
         )
@@ -210,15 +238,20 @@ def scrape_basic(url: str, raw: bool = False, render_js: bool = False) -> str:
     except Exception as e:
         raise Exception(f"Request failed: {str(e)}")
 
+    html = resp.text
     content_type = resp.headers.get("content-type", "")
 
     if raw:
-        return resp.text
+        return html
 
     if "json" in content_type:
-        return resp.text
+        return html
 
-    soup = BeautifulSoup(resp.text, "html.parser")
+    if _is_cloudflare_blocked(html):
+        logging.info("Cloudflare detected, falling back to stealth browser")
+        return _scrape_with_stealth(url, raw)
+
+    soup = BeautifulSoup(html, "html.parser")
     for tag in soup(["script", "style", "noscript"]):
         tag.decompose()
 
@@ -256,19 +289,79 @@ def fetch_raw(url: str, render_js: bool = False) -> tuple[str, dict[str, str]]:
     Returns (html, headers_dict).
     """
     if render_js:
-        return _fetch_raw_playwright(url)
+        return _fetch_raw_stealth(url)
 
     if not CURL_AVAILABLE:
         raise Exception("curl_cffi not available - cannot fetch")
 
     resp = curl_requests.get(
         url,
-        impersonate="chrome",
+        impersonate="chrome131",
         timeout=30,
         allow_redirects=True,
     )
     resp.raise_for_status()
-    return resp.text, dict(resp.headers)
+    html = resp.text
+    if _is_cloudflare_blocked(html):
+        logging.info("Cloudflare detected in fetch_raw, falling back to stealth browser")
+        return _fetch_raw_stealth(url)
+    return html, dict(resp.headers)
+
+
+def _fetch_raw_stealth(url: str) -> tuple[str, dict[str, str]]:
+    """Fetch raw HTML with stealth browser, returning (html, headers)."""
+    # Try Playwright with stealth
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--window-size=1920,1080",
+                    "--excludeSwitches=enable-automation",
+                ],
+            )
+            context = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                viewport={"width": 1920, "height": 1080},
+                locale="en-US",
+            )
+            page = context.new_page()
+            page.add_init_script(STEALTH_JS)
+            response_headers: dict[str, str] = {}
+            def on_response(resp):
+                nonlocal response_headers
+                if resp.url == url or resp.url.rstrip("/") == url.rstrip("/"):
+                    try:
+                        response_headers = resp.headers
+                    except Exception:
+                        pass
+            page.on("response", on_response)
+            page.goto(url, wait_until="networkidle", timeout=30000)
+            html = page.content()
+            browser.close()
+            if html and not _is_cloudflare_blocked(html):
+                return html, response_headers
+    except Exception as e:
+        logging.warning(f"Playwright stealth fetch failed: {e}")
+
+    # Try Camoufox
+    try:
+        from camoufox.sync_api import Camoufox
+        with Camoufox(headless=True) as browser:
+            page = browser.new_page()
+            page.goto(url, wait_until="networkidle", timeout=30000)
+            html = page.content()
+            if html and not _is_cloudflare_blocked(html):
+                return html, {}
+    except Exception as e:
+        logging.warning(f"Camoufox fetch failed: {e}")
+
+    # Fallback to plain playwright
+    return _fetch_raw_playwright(url)
 
 
 def _fetch_raw_playwright(url: str) -> tuple[str, dict[str, str]]:
@@ -281,7 +374,7 @@ def _fetch_raw_playwright(url: str) -> tuple[str, dict[str, str]]:
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         )
         page = context.new_page()
 
@@ -302,27 +395,78 @@ def _fetch_raw_playwright(url: str) -> tuple[str, dict[str, str]]:
     return html, response_headers
 
 
-def scrape_with_playwright(url: str, raw: bool = False) -> str:
-    """Render JavaScript using Playwright headless browser."""
+def _scrape_with_stealth(url: str, raw: bool = False) -> str:
+    """Scrape with stealth browser fallback: Playwright → Camoufox → Nodriver."""
+    html = None
+
+    # Try Playwright with stealth patches
     try:
         from playwright.sync_api import sync_playwright
-    except ImportError:
-        raise Exception("Playwright not installed - JS rendering unavailable")
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--window-size=1920,1080",
+                    "--excludeSwitches=enable-automation",
+                ],
+            )
+            context = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                viewport={"width": 1920, "height": 1080},
+                locale="en-US",
+            )
+            page = context.new_page()
+            page.add_init_script(STEALTH_JS)
+            page.goto(url, wait_until="networkidle", timeout=30000)
+            html = page.content()
+            browser.close()
+            if html and not _is_cloudflare_blocked(html):
+                return html if raw else _clean_html(html)
+    except Exception as e:
+        logging.warning(f"Playwright stealth failed: {e}")
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        )
-        page = context.new_page()
-        page.goto(url, wait_until="networkidle", timeout=30000)
-        content = page.content()
-        browser.close()
+    # Try Camoufox (Firefox-based, harder to detect)
+    try:
+        from camoufox.sync_api import Camoufox
+        with Camoufox(headless=True) as browser:
+            page = browser.new_page()
+            page.goto(url, wait_until="networkidle", timeout=30000)
+            html = page.content()
+            if html and not _is_cloudflare_blocked(html):
+                return html if raw else _clean_html(html)
+    except Exception as e:
+        logging.warning(f"Camoufox failed: {e}")
 
-    if raw:
-        return content
+    # Try Nodriver (undetected-chromedriver successor)
+    try:
+        import nodriver as uc
+        import asyncio
 
-    soup = BeautifulSoup(content, "html.parser")
+        async def _nodriver_fetch():
+            browser = await uc.start(headless=True)
+            page = await browser.get(url)
+            await page.sleep(5)
+            content = await page.get_content()
+            await browser.stop()
+            return content
+
+        html = asyncio.run(_nodriver_fetch())
+        if html and not _is_cloudflare_blocked(html):
+            return html if raw else _clean_html(html)
+    except Exception as e:
+        logging.warning(f"Nodriver failed: {e}")
+
+    if html:
+        return html if raw else _clean_html(html)
+    raise Exception("All stealth engines failed to bypass Cloudflare")
+
+
+def _clean_html(html: str) -> str:
+    """Extract clean text from HTML."""
+    soup = BeautifulSoup(html, "html.parser")
     for tag in soup(["script", "style", "noscript"]):
         tag.decompose()
 
@@ -342,6 +486,20 @@ def scrape_with_playwright(url: str, raw: bool = False) -> str:
 
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     text = "\n".join(lines)
+
+    parts = []
+    if title:
+        parts.append(f"Title: {title}")
+    if meta_desc:
+        parts.append(f"Description: {meta_desc}")
+    parts.append(f"\nContent:\n{text}")
+
+    return "\n".join(parts)
+
+
+def scrape_with_playwright(url: str, raw: bool = False) -> str:
+    """Render JavaScript using Playwright with stealth patches."""
+    return _scrape_with_stealth(url, raw)
 
     parts = []
     if title:
