@@ -2,13 +2,13 @@ from setuptools import setup, find_packages
 
 setup(
     name="intelliscrape",
-    version="2.9.1",
+    version="3.0.0",
     description="Advanced web scraping library with anti-detection, TLS impersonation, and stealth browsing. Scrapes 98% of websites.",
     long_description=open("README.md", encoding="utf-8").read(),
     long_description_content_type="text/markdown",
     author="GuixJoy",
     url="https://github.com/GuixJoy/IntelliScrape",
-    license="MIT",
+    license="LGPL-2.1",
     packages=find_packages(),
     install_requires=[
         "requests",
@@ -47,7 +47,7 @@ setup(
         "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3.12",
         "Programming Language :: Python :: 3.13",
-        "License :: OSI Approved :: MIT License",
+        "License :: OSI Approved :: GNU Lesser General Public License v2 or later (LGPLv2+)",
         "Operating System :: OS Independent",
         "Topic :: Internet :: WWW/HTTP :: Indexing/Search",
         "Topic :: Software Development :: Libraries :: Python Modules",
