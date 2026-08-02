@@ -35,6 +35,7 @@ from .cookies import CookieManager
 from .interceptor import RequestInterceptor
 from .link_checker import check_links as _check_links
 from .exceptions import IntelliScrapeError
+from .progress import ScrapeProgress
 
 
 # Fix Windows console encoding for Unicode output
@@ -42,6 +43,44 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="repla
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 console = Console()
+
+
+# Status icons for progress reporting
+_STATUS_ICONS = {
+    "trying": "[dim]...[/dim]",
+    "blocked": "[red]BLOCKED[/red]",
+    "captcha_detected": "[yellow]CAPTCHA[/yellow]",
+    "solving": "[yellow]SOLVING[/yellow]",
+    "solved": "[green]SOLVED[/green]",
+    "js_only": "[dim]JS-only[/dim]",
+    "success": "[green]OK[/green]",
+    "failed": "[red]FAIL[/red]",
+    "all_failed": "[red]ALL FAILED[/red]",
+    "idle": "[dim]...[/dim]",
+}
+
+
+def _verbose_progress(p: ScrapeProgress) -> None:
+    """Print real-time progress to console."""
+    icon = _STATUS_ICONS.get(p.status, "")
+    attempt_str = f"[{p.attempt}/{p.total_attempts}]" if p.total_attempts else ""
+
+    if p.status == "trying":
+        console.print(f"  {attempt_str} [cyan]{p.engine}[/cyan] {icon}")
+    elif p.status == "blocked":
+        console.print(f"  {attempt_str} [cyan]{p.engine}[/cyan] {icon} — {p.message}")
+    elif p.status in ("captcha_detected", "solving"):
+        console.print(f"  {attempt_str} [cyan]{p.engine}[/cyan] {icon} — {p.message}")
+    elif p.status == "solved":
+        console.print(f"  {attempt_str} [cyan]{p.engine}[/cyan] {icon} — {p.message}")
+    elif p.status == "js_only":
+        console.print(f"  {attempt_str} [cyan]{p.engine}[/cyan] {icon}")
+    elif p.status == "success":
+        console.print(f"  {attempt_str} [cyan]{p.engine}[/cyan] {icon} [{p.elapsed_seconds:.1f}s]")
+    elif p.status == "failed":
+        console.print(f"  {attempt_str} [cyan]{p.engine}[/cyan] {icon} — {p.message}")
+    elif p.status == "all_failed":
+        console.print(f"  [red]All engines failed after {p.elapsed_seconds:.1f}s[/red]")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -202,11 +241,17 @@ Examples:
                        help="Ignore robots.txt")
 
     # Force browser
+    parser.add_argument("--engine", choices=["static", "playwright_stealth", "camoufox", "nodriver", "drissionpage"],
+                        help="Force a specific engine")
     parser.add_argument("--force-browser", action="store_true", help="Force browser engine")
 
     # Manual CAPTCHA
     parser.add_argument("--manual-captcha", action="store_true",
                        help="When a CAPTCHA is detected, open a visible browser and wait for you to solve it")
+
+    # Verbose progress
+    parser.add_argument("-v", "--verbose", action="store_true",
+                       help="Show real-time progress (which engine is running, CAPTCHA detection, etc.)")
 
     args = parser.parse_args(argv)
 
@@ -694,19 +739,26 @@ def _scrape(args) -> int:
             console.print(f"[yellow]Could not load cookies: {e}[/yellow]")
 
     # Scrape
+    progress_cb = _verbose_progress if args.verbose else None
+
+    if args.verbose:
+        console.print(f"\n[bold]Scraping {args.url}[/bold]")
+        console.print()
+
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
         console=console,
-        transient=True,
+        transient=not args.verbose,
     ) as progress:
-        task = progress.add_task(f"Scraping {args.url}...", total=None)
+        task = progress.add_task(f"Scraping {args.url}..." if not args.verbose else "", total=None)
 
         if args.json:
-            result = scraper.get_structured(args.url, force_browser=args.force_browser)
+            result = scraper.get_structured(args.url, engine=args.engine, force_browser=args.force_browser)
             content = json.dumps(result.to_dict(), indent=2, ensure_ascii=False)
         else:
-            content = scraper.scrape(args.url, return_raw=args.raw, force_browser=args.force_browser)
+            content = scraper.scrape(args.url, return_raw=args.raw, engine=args.engine,
+                                    force_browser=args.force_browser, on_progress=progress_cb)
 
         progress.update(task, completed=True)
 

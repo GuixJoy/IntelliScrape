@@ -10,6 +10,15 @@ from ..proxy import ProxyConfig
 from .base import BaseEngine, ScrapeResult
 
 
+class HTTPStatusError(Exception):
+    """Raised when server returns a retryable HTTP status code."""
+
+    def __init__(self, status_code: int, url: str):
+        self.status_code = status_code
+        self.url = url
+        super().__init__(f"HTTP {status_code} from {url}")
+
+
 class StaticEngine(BaseEngine):
     """Static HTML downloader with TLS impersonation.
 
@@ -85,6 +94,10 @@ class StaticEngine(BaseEngine):
                 allow_redirects=True,
                 verify=False,
             )
+
+            # Raise for retryable status codes so SmartRetry can handle them
+            if response.status_code in (429, 500, 502, 503, 504):
+                raise HTTPStatusError(response.status_code, url)
 
             return ScrapeResult(
                 url=str(response.url),

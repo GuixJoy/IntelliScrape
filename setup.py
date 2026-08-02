@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="intelliscrape",
-    version="3.0.0",
+    version="3.1.0",
     description="Advanced web scraping library with anti-detection, TLS impersonation, and stealth browsing. Scrapes 98% of websites.",
     long_description=open("README.md", encoding="utf-8").read(),
     long_description_content_type="text/markdown",

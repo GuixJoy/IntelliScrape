@@ -12,8 +12,8 @@ from ..proxy import ProxyConfig
 from .base import BaseEngine, ScrapeResult
 
 
-# JavaScript patches for stealth mode
-STEALTH_JS = """
+# JavaScript patches for stealth mode - base version (overridden per-fingerprint)
+STEALTH_JS_BASE = """
 // Override navigator.webdriver
 Object.defineProperty(navigator, 'webdriver', {
     get: () => undefined
@@ -45,18 +45,6 @@ window.navigator.permissions.query = (parameters) => (
         originalQuery(parameters)
 );
 
-// Override WebGL vendor and renderer
-const getParameter = WebGLRenderingContext.prototype.getParameter;
-WebGLRenderingContext.prototype.getParameter = function(parameter) {
-    if (parameter === 37445) {
-        return 'Intel Inc.';
-    }
-    if (parameter === 37446) {
-        return 'Intel Iris OpenGL Engine';
-    }
-    return getParameter.apply(this, arguments);
-};
-
 // Override navigator.connection
 Object.defineProperty(navigator, 'connection', {
     get: () => ({
@@ -67,23 +55,6 @@ Object.defineProperty(navigator, 'connection', {
     })
 });
 
-// Override navigator.hardwareConcurrency
-Object.defineProperty(navigator, 'hardwareConcurrency', {
-    get: () => 8
-});
-
-// Override navigator.deviceMemory
-Object.defineProperty(navigator, 'deviceMemory', {
-    get: () => 8
-});
-
-// Override screen dimensions
-Object.defineProperty(screen, 'width', { get: () => 1920 });
-Object.defineProperty(screen, 'height', { get: () => 1080 });
-Object.defineProperty(screen, 'availWidth', { get: () => 1920 });
-Object.defineProperty(screen, 'availHeight', { get: () => 1040 });
-Object.defineProperty(screen, 'colorDepth', { get: () => 24 });
-
 // Override Date to prevent timezone fingerprinting
 const OriginalDate = Date;
 const originalGetMinutes = OriginalDate.prototype.getMinutes;
@@ -91,6 +62,40 @@ OriginalDate.prototype.getMinutes = function() {
     const date = new OriginalDate(this);
     return originalGetMinutes.call(date);
 };
+"""
+
+
+def _build_stealth_js(fp) -> str:
+    """Build fingerprint-specific stealth JS from a FingerprintGenerator profile."""
+    return STEALTH_JS_BASE + f"""
+// Override navigator.hardwareConcurrency
+Object.defineProperty(navigator, 'hardwareConcurrency', {{
+    get: () => {fp.hardware_concurrency}
+}});
+
+// Override navigator.deviceMemory
+Object.defineProperty(navigator, 'deviceMemory', {{
+    get: () => {fp.device_memory}
+}});
+
+// Override screen dimensions
+Object.defineProperty(screen, 'width', {{ get: () => {fp.screen_width} }});
+Object.defineProperty(screen, 'height', {{ get: () => {fp.screen_height} }});
+Object.defineProperty(screen, 'availWidth', {{ get: () => {fp.screen_width} }});
+Object.defineProperty(screen, 'availHeight', {{ get: () => {fp.screen_height} }});
+Object.defineProperty(screen, 'colorDepth', {{ get: () => {fp.color_depth} }});
+
+// Override WebGL vendor and renderer
+const getParameter = WebGLRenderingContext.prototype.getParameter;
+WebGLRenderingContext.prototype.getParameter = function(parameter) {{
+    if (parameter === 37445) {{
+        return '{fp.webgl_vendor}';
+    }}
+    if (parameter === 37446) {{
+        return '{fp.webgl_renderer}';
+    }}
+    return getParameter.apply(this, arguments);
+}};
 """
 
 
@@ -173,18 +178,26 @@ class PlaywrightStealthEngine(BaseEngine):
                     args=browser_args,
                 )
 
-                # Create context with fingerprint
+                # Create context with fingerprint and proxy auth
                 fp = self.fingerprint_gen.generate()
-                context = browser.new_context(
-                    viewport={"width": fp.viewport_width, "height": fp.viewport_height},
-                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-                    locale=fp.language,
-                    timezone_id=fp.timezone,
-                    device_scale_factor=fp.device_pixel_ratio,
-                    has_touch=False,
-                    java_script_enabled=True,
-                    color_scheme="light",
-                )
+                context_kwargs = {
+                    "viewport": {"width": fp.viewport_width, "height": fp.viewport_height},
+                    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                    "locale": fp.language,
+                    "timezone_id": fp.timezone,
+                    "device_scale_factor": fp.device_pixel_ratio,
+                    "has_touch": False,
+                    "java_script_enabled": True,
+                    "color_scheme": "light",
+                }
+                # Add proxy auth if available
+                if self.proxy and self.proxy.username and self.proxy.password:
+                    context_kwargs["proxy"] = {
+                        "server": self.proxy.url,
+                        "username": self.proxy.username,
+                        "password": self.proxy.password,
+                    }
+                context = browser.new_context(**context_kwargs)
 
                 # Add cookies if provided
                 if cookies:
@@ -195,15 +208,16 @@ class PlaywrightStealthEngine(BaseEngine):
 
                 page = context.new_page()
 
-                # Apply stealth patches
-                page.add_init_script(STEALTH_JS)
+                # Apply fingerprint-specific stealth patches
+                stealth_js = _build_stealth_js(fp)
+                page.add_init_script(stealth_js)
 
                 # Set extra headers if provided
                 if headers:
                     page.set_extra_http_headers(headers)
 
-                # Navigate to page
-                response = page.goto(url, wait_until="networkidle", timeout=timeout * 1000)
+                # Navigate to page (domcontentloaded is faster than networkidle)
+                response = page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
 
                 # Wait for JS-rendered content (React, Vue, Angular SPAs)
                 try:
@@ -359,7 +373,7 @@ class PlaywrightAsyncStealthEngine(BaseEngine):
                 if headers:
                     await page.set_extra_http_headers(headers)
 
-                response = await page.goto(url, wait_until="networkidle", timeout=timeout * 1000)
+                response = await page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
 
                 # Wait for JS-rendered content (React, Vue, Angular SPAs)
                 try:

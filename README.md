@@ -20,17 +20,18 @@ A Python web scraping library with anti-detection, TLS fingerprint impersonation
 
 ## What is IntelliScrape?
 
-IntelliScrape is a Python web scraping library that **scrapes 98% of websites** out of the box. It uses a **4-tier engine system** that automatically escalates from fast HTTP requests to full browser automation — you get the cheapest, fastest method that works, and heavier weapons only when needed.
+IntelliScrape is a Python web scraping library that **scrapes any website** out of the box. It uses a **5-tier engine system** that automatically escalates from fast HTTP requests to full browser automation — you get the cheapest, fastest method that works, and heavier weapons only when needed.
 
 No more switching between `requests`, `playwright`, and `selenium`. No more debugging why your scraper got blocked. Just `scrape(url)` and you're done.
 
 **Key capabilities:**
-- 4-tier engine escalation (static → Playwright → Camoufox → nodriver)
+- 5-tier engine escalation (static → Playwright → Camoufox → nodriver → DrissionPage)
 - TLS fingerprint impersonation (JA3/JA4 bypass)
 - Browser fingerprint randomization
 - Human-like behavioral simulation
 - CAPTCHA detection, automated solving, and manual solving
 - Anti-bot vendor detection (Cloudflare, Akamai, DataDome, PerimeterX)
+- Real-time progress reporting (see which engine is running)
 - Intelligent site analysis and auto-configuration
 - Proxy rotation with free proxy finder
 - Export to JSON, CSV, Excel, SQLite, Text, Markdown
@@ -144,8 +145,10 @@ intelliscrape [URL] [OPTIONS]
 
 | Flag | Description |
 |---|---|
+| `--engine ENGINE` | Force specific engine: `static`, `playwright_stealth`, `camoufox`, `nodriver`, `drissionpage` |
 | `--force-browser` | Force browser engine for JS-heavy sites |
 | `--manual-captcha` | Open visible browser for manual CAPTCHA solving |
+| `-v, --verbose` | Show real-time progress (which engine is running, CAPTCHA solving, etc.) |
 
 ### Proxy
 
@@ -833,7 +836,7 @@ Each bypass class provides detection, recommended settings, and automated token 
 
 ## Engine System
 
-IntelliScrape uses a **4-tier engine escalation** system. It tries the cheapest, fastest method first and escalates only when needed.
+IntelliScrape uses a **5-tier engine escalation** system. It tries the cheapest, fastest method first and escalates only when needed.
 
 ```
 Tier 1: Static (curl_cffi)        → Sub-second, TLS impersonation
@@ -843,6 +846,8 @@ Tier 2: Playwright Stealth         → 2-5s, headless Chromium + patches
 Tier 3: Camoufox                   → 3-8s, custom Firefox (C++ patches)
     ↓ if still blocked
 Tier 4: nodriver                   → 5-15s, raw CDP, no WebDriver traces
+    ↓ if still blocked
+Tier 5: DrissionPage               → 5-15s, hybrid HTTP+browser mode
 ```
 
 | Tier | Engine | Speed | Stealth | Best For |
@@ -851,6 +856,7 @@ Tier 4: nodriver                   → 5-15s, raw CDP, no WebDriver traces
 | 2 | `playwright_stealth` | 2-5s | Medium | JS-heavy sites, basic bot detection |
 | 3 | `camoufox` | 3-8s | High | Protected sites, fingerprint detection |
 | 4 | `nodriver` | 5-15s | Maximum | DataDome, PerimeterX, Akamai |
+| 5 | `drissionpage` | 5-15s | High | Hybrid HTTP+browser, fallback |
 
 ```python
 # Auto-detect (default)
@@ -861,6 +867,14 @@ text = scraper.scrape("https://site.com", engine="playwright_stealth")
 
 # Force browser for known JS-heavy sites
 text = scraper.scrape("https://react-app.com", force_browser=True)
+```
+
+```bash
+# Force engine via CLI
+intelliscrape https://amazon.com --engine camoufox -v
+
+# Auto-detect with verbose progress
+intelliscrape https://amazon.com -v
 ```
 
 ---
@@ -1087,10 +1101,14 @@ for link in report.links:
 |---|---|
 | Returns empty or widget text | Use `force_browser=True` — site is a JS SPA |
 | CAPTCHA blocking | Use `manual_captcha=True` or `api_key` + `captcha_provider` |
-| Blocked by anti-bot | Try `engine="camoufox"` + residential proxy |
+| Blocked by anti-bot | Try `--engine camoufox` + residential proxy |
 | Playwright not installed | `pip install playwright && playwright install chromium` |
-| Camoufox not installed | `pip install camoufox && camoufox install` |
+| Camoufox not installed | `pip install "camoufox[geoip]" && python -m camoufox fetch` |
 | nodriver not installed | `pip install nodriver` |
+| DrissionPage not installed | `pip install DrissionPage` |
+| Want to see what's happening | Add `-v` flag for real-time progress output |
+| Scraping too slow | Try `--engine static` for fastest results |
+| Site requires login | Use `--login --username USER --password PASS` |
 
 ---
 
@@ -1102,6 +1120,7 @@ intelliscrape/
     __main__.py             # python -m intelliscrape
     core.py                 # IntelliScrape class (main orchestrator)
     cli.py                  # CLI (argparse + rich)
+    progress.py             # ProgressTracker, ScrapeProgress (real-time status)
     async_scraper.py        # AsyncIntelliScrape
     intelligent.py          # SiteAnalyzer, SmartRateLimiter
     auth.py                 # Authenticator, LoginCredentials
@@ -1117,15 +1136,14 @@ intelliscrape/
     cleaner.py              # Text cleaning
     utils.py                # HTML analysis
     exceptions.py           # Exceptions
-    retry.py                # SmartRetry
-    ip_manager.py           # IPManager, NaturalRotator
 
-    engines/                # 4-tier scraping engines
+    engines/                # 5-tier scraping engines
         base.py             # BaseEngine, ScrapeResult
         static.py           # curl_cffi (Tier 1)
         playwright_stealth.py  # Playwright (Tier 2)
         camoufox.py         # Camoufox (Tier 3)
         stealth.py          # nodriver (Tier 4)
+        drissionpage.py     # DrissionPage (Tier 5)
 
     anti_detection/         # Anti-detection subsystem
         antibot.py          # AntiBotDetector
@@ -1139,6 +1157,7 @@ intelliscrape/
 
     challenges/             # Challenge handling
         captcha.py          # CaptchaDetector, CaptchaSolver
+        manual.py           # ManualCaptchaSolver (opens visible browser)
 
     extractor/              # Content extraction
         structured.py       # StructuredExtractor, StructuredData

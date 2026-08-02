@@ -25,6 +25,7 @@ from .engines.playwright_stealth import PlaywrightStealthEngine
 from .engines.static import StaticEngine
 from .engines.stealth import StealthEngine
 from .engines.camoufox import CamoufoxEngine
+from .engines.drissionpage import DrissionPageEngine
 from .exceptions import IntelliScrapeError
 from .extractor import extract_text
 from .extractor.structured import StructuredExtractor, StructuredData
@@ -45,6 +46,20 @@ logger = logging.getLogger("intelliscrape")
 
 
 _ALLOWED_SCHEMES = {"http", "https"}
+
+_CLOUDFLARE_MARKERS = [
+    "checking your browser", "just a moment", "challenge-platform",
+    "cf-browser-verification", "enable javascript", "verify you are human",
+    "security check", "please wait", "turnstile", "challenge.js",
+]
+
+
+def _is_cloudflare_blocked(html: str) -> bool:
+    """Check if HTML is a Cloudflare challenge page."""
+    if not html:
+        return False
+    lower = html.lower()
+    return any(marker in lower for marker in _CLOUDFLARE_MARKERS)
 
 
 class IntelliScrape:
@@ -253,6 +268,12 @@ class IntelliScrape:
                 headless=headless,
                 simulate_behavior=simulate_behavior,
             ),
+            "drissionpage": DrissionPageEngine(
+                fingerprint_generator=self.fingerprint_gen,
+                proxy=proxy_config,
+                headless=headless,
+                simulate_behavior=simulate_behavior,
+            ),
         }
 
         # Initialize CAPTCHA solver
@@ -336,6 +357,7 @@ class IntelliScrape:
         handle_consent: bool = True,
         force_browser: bool = False,
         intelligent: Optional[bool] = None,
+        on_progress=None,
         **kwargs,
     ) -> Union[str, StructuredData]:
         """Scrape a URL and return text content.
@@ -380,10 +402,9 @@ class IntelliScrape:
             analysis = self.site_analyzer.analyze(url)
             self.logger.info(f"Site analysis: {analysis.site_type.value} | Protection: {analysis.protection_level.value}")
             
-            # Auto-select engine based on analysis
-            if not engine and not force_browser:
-                engine = analysis.recommended_engine
-                self.logger.info(f"Auto-selected engine: {engine}")
+            # Intelligent mode: analysis done, but don't force a single engine
+            # The fallback chain in _fetch() will try all engines
+            pass
             
             # Auto-configure rate limiting
             if url not in self._rate_limiters:
@@ -416,7 +437,7 @@ class IntelliScrape:
             kwargs["headers"]["Authorization"] = f"Bearer {auth_token}"
 
         # Get result
-        result = self._fetch(url, engine=engine, **kwargs)
+        result = self._fetch(url, engine=engine, on_progress=on_progress, **kwargs)
 
         if not result.success:
             if use_intelligent and url in self._rate_limiters:
@@ -440,6 +461,19 @@ class IntelliScrape:
             consent_info = CookieConsentHandler.detect(result.html)
             if consent_info.has_consent:
                 self.logger.info(f"Cookie consent detected: {consent_info.consent_type}")
+                # Strip consent elements from static HTML results
+                if consent_info.accept_button_selector:
+                    try:
+                        from bs4 import BeautifulSoup
+                        soup = BeautifulSoup(result.html, "html.parser")
+                        # Remove common consent overlay elements
+                        for selector in ["[id*='cookie']", "[class*='cookie-consent']",
+                                          "[id*='consent']", "[class*='consent-banner']"]:
+                            for el in soup.select(selector):
+                                el.decompose()
+                        result.html = str(soup)
+                    except Exception:
+                        pass
 
         if return_structured:
             return StructuredExtractor.extract(result.html, url)
@@ -472,28 +506,28 @@ class IntelliScrape:
         intelligent: Optional[bool] = None,
         **kwargs,
     ) -> List[Dict[str, Any]]:
-        """Scrape multiple URLs with intelligent rate limiting.
+        """Scrape multiple URLs concurrently with rate limiting.
 
         Returns list of dicts with 'url', 'content', 'success', 'error'.
         """
-        results = []
-        for url in urls:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        def _scrape_one(url):
             try:
                 content = self.scrape(url, engine=engine, intelligent=intelligent, **kwargs)
-                results.append({
-                    "url": url,
-                    "content": content,
-                    "success": True,
-                    "error": None,
-                })
+                return {"url": url, "content": content, "success": True, "error": None}
             except Exception as exc:
-                results.append({
-                    "url": url,
-                    "content": "",
-                    "success": False,
-                    "error": str(exc),
-                })
+                return {"url": url, "content": "", "success": False, "error": str(exc)}
 
+        results = []
+        with ThreadPoolExecutor(max_workers=max_concurrent) as executor:
+            future_to_url = {executor.submit(_scrape_one, url): url for url in urls}
+            for future in as_completed(future_to_url):
+                results.append(future.result())
+
+        # Preserve original URL order
+        url_order = {url: i for i, url in enumerate(urls)}
+        results.sort(key=lambda r: url_order.get(r["url"], 0))
         return results
 
     def get_structured(self, url: str, **kwargs) -> StructuredData:
@@ -508,62 +542,104 @@ class IntelliScrape:
         url: str,
         *,
         engine: Optional[str] = None,
+        on_progress=None,
         **kwargs,
     ) -> ScrapeResult:
         """Fetch URL using the appropriate engine with fallback chain."""
-        
+        from .progress import ProgressTracker, ScrapeProgress
+        from .challenges.manual import ManualCaptchaSolver
+
+        tracker = ProgressTracker(on_progress=on_progress, url=url)
+        total = len(self.engines)
+        engine_order = ["static", "playwright_stealth", "camoufox", "nodriver", "drissionpage"]
+
         # If specific engine requested, use only that
         if engine and engine in self.engines:
+            tracker.engine_trying(engine, 1, 1)
             result = self._fetch_with_engine(url, engine, **kwargs)
-            if result.success and not html_needs_browser(result.html):
-                return self._handle_manual_captcha(url, result)
-            # If engine succeeded but returned JS-only content, fall through to escalation
-            if not result.success:
+            if result.success:
+                tracker.engine_success(engine, 1, 1)
+                return self._handle_manual_captcha(url, result, tracker)
+            else:
+                tracker.engine_failed(engine, result.error or "unknown", 1, 1)
                 raise IntelliScrapeError(f"Engine {engine} failed: {result.error}")
 
         # Auto-detect: try engines in order with fallback
-        engine_order = ["static", "playwright_stealth", "camoufox", "nodriver"]
         last_result = None
+        attempt_timeout = 30  # 30s per engine attempt
 
-        for engine_name in engine_order:
-            self.logger.info(f"Trying engine: {engine_name}")
-            
-            result = self._fetch_with_engine(url, engine_name, **kwargs)
+        for i, engine_name in enumerate(engine_order):
+            tracker.engine_trying(engine_name, i + 1, total)
+
+            # Pass proxy to engine if available
+            fetch_kwargs = dict(kwargs)
+            fetch_kwargs["timeout"] = attempt_timeout
+            proxy_cfg = self.proxy_manager.get_proxy()
+            if proxy_cfg and "proxy" not in fetch_kwargs:
+                fetch_kwargs["proxy"] = proxy_cfg
+
+            result = self._fetch_with_engine(url, engine_name, **fetch_kwargs)
             last_result = result
-            
+
             if result.success:
+                # Check for Cloudflare challenge
+                if _is_cloudflare_blocked(result.html):
+                    tracker.engine_blocked(engine_name, "cloudflare", i + 1, total)
+                    # Try manual CAPTCHA solve
+                    solver = ManualCaptchaSolver()
+                    solved = solver.solve_if_detected(url, result.html, self.session_manager.get_cookies())
+                    if solved.solved:
+                        tracker.engine_solved(engine_name, "cloudflare_turnstile")
+                        # Re-fetch with solved cookies
+                        fetch_kwargs["cookies"] = solved.cookies
+                        result = self._fetch_with_engine(url, engine_name, **fetch_kwargs)
+                        if result.success and not html_needs_browser(result.html):
+                            tracker.engine_success(engine_name, i + 1, total)
+                            return result
+
+                # Check for other CAPTCHAs
+                captcha_info = CaptchaDetector.detect(result.html, url)
+                if captcha_info:
+                    tracker.engine_captcha(engine_name, captcha_info.captcha_type.value, i + 1, total)
+                    solver = ManualCaptchaSolver()
+                    solved = solver.solve(url, captcha_info, self.session_manager.get_cookies())
+                    if solved.solved:
+                        tracker.engine_solved(engine_name, captcha_info.captcha_type.value)
+                        fetch_kwargs["cookies"] = solved.cookies
+                        result = self._fetch_with_engine(url, engine_name, **fetch_kwargs)
+
                 # Check if we got meaningful content
-                if not html_needs_browser(result.html):
-                    self.logger.info(f"Success with engine: {engine_name}")
-                    return self._handle_manual_captcha(url, result)
-                
+                if result.success and not html_needs_browser(result.html):
+                    tracker.engine_success(engine_name, i + 1, total)
+                    return self._handle_manual_captcha(url, result, tracker)
+
                 # Content needs browser, try next engine
-                self.logger.info(f"Engine {engine_name} returned JS-only content, trying next...")
+                tracker.engine_js_only(engine_name, i + 1, total)
                 continue
-            
-            self.logger.info(f"Engine {engine_name} failed: {result.error}")
+
+            tracker.engine_failed(engine_name, result.error or "unknown", i + 1, total)
             continue
 
         # All engines failed or returned JS-only content
         if last_result and last_result.success:
-            # We got some content, return it
-            return self._handle_manual_captcha(url, last_result)
-        
+            return self._handle_manual_captcha(url, last_result, tracker)
+
+        tracker.all_failed()
         raise IntelliScrapeError(f"All engines failed for {url}")
 
-    def _handle_manual_captcha(self, url: str, result: ScrapeResult) -> ScrapeResult:
-        """Check for CAPTCHA and wait for manual solving if enabled.
-
-        If ``manual_captcha`` is True and a CAPTCHA is detected in the HTML,
-        a visible browser is opened for the user to solve it, and the page is
-        re-fetched.  Otherwise the original result is returned unchanged.
-        """
+    def _handle_manual_captcha(self, url: str, result: ScrapeResult, tracker=None) -> ScrapeResult:
+        """Check for CAPTCHA and wait for manual solving if enabled."""
         if not self.manual_captcha:
             return result
 
         captcha_info = CaptchaDetector.detect(result.html, url)
         if captcha_info is None:
             return result
+
+        if tracker:
+            tracker.engine_captcha(result.engine, captcha_info.captcha_type.value,
+                                   tracker._last_report.attempt if tracker._last_report else 0,
+                                   tracker._last_report.total_attempts if tracker._last_report else 0)
 
         self.logger.info(f"CAPTCHA detected ({captcha_info.captcha_type.value}), waiting for manual solve")
         return self._wait_for_manual_captcha(url, captcha_info)

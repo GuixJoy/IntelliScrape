@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "intelliscrape"
-version = "3.0.0"
+version = "3.1.0"
 description = "Advanced web scraping library with anti-detection, TLS impersonation, and stealth browsing. Scrapes 98% of websites."
 readme = "README.md"
 license = "LGPL-2.1"

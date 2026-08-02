@@ -85,6 +85,19 @@ class StealthEngine(BaseEngine):
             # Navigate to page
             page = await browser.get(url)
 
+            # Inject cookies if provided
+            if cookies:
+                try:
+                    for name, value in cookies.items():
+                        await page.send(uc.cdp.network.set_cookie(
+                            name=name,
+                            value=value,
+                            domain=url.split("//")[1].split("/")[0],
+                            path="/",
+                        ))
+                except Exception:
+                    pass
+
             # Wait for page to load
             await page.sleep(3)
 
