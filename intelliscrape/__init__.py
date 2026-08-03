@@ -112,7 +112,7 @@ from .link_checker import (
 from .tech.extractor import TechStack, TechInfo, TechStackExtractor
 from .api_detector.extractor import ApiReport, ApiEndpoint, ApiKeyExposure, ApiDetector
 
-__version__ = "3.1.0"
+__version__ = "3.1.1"
 
 __all__ = [
     # Main API

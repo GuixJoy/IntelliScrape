@@ -999,6 +999,7 @@ def _detect_api_report(args) -> int:
 def _crawl(args) -> int:
     """Crawl a website with progress bar."""
     scraper = _create_scraper(args)
+    progress_cb = _verbose_progress if args.verbose else None
 
     with Progress(
         SpinnerColumn(),
@@ -1016,6 +1017,8 @@ def _crawl(args) -> int:
             args.url,
             max_pages=args.max_pages,
             on_page=on_page,
+            scraper=scraper,
+            on_progress=progress_cb,
         )
 
         progress.update(task, completed=args.max_pages, description="Crawl complete!")

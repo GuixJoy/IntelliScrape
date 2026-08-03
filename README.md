@@ -30,7 +30,7 @@ No more switching between `requests`, `playwright`, and `selenium`. No more debu
 - Browser fingerprint randomization
 - Human-like behavioral simulation
 - CAPTCHA detection, automated solving, and manual solving
-- Anti-bot vendor detection (Cloudflare, Akamai, DataDome, PerimeterX)
+- Anti-bot vendor detection (Cloudflare, Akamai, DataDome, PerimeterX) with smart false-positive prevention
 - Real-time progress reporting (see which engine is running)
 - Intelligent site analysis and auto-configuration
 - Proxy rotation with free proxy finder
@@ -817,6 +817,11 @@ if info:
     print(info.confidence)   # 0.95
 ```
 
+**Smart detection** uses a two-tier approach to avoid false positives:
+- **Strong markers** (only on actual challenge pages): 1 match = blocked
+- **Weak markers** (can appear in docs/blogs): require 3+ matches AND page <50KB
+- Real challenge pages are tiny (<50KB), content pages are large — size prevents false triggers on sites like cloudflare.com that mention their own products
+
 ---
 
 ### Anti-bot Bypass Classes
@@ -940,6 +945,8 @@ result = scraper.scrape("https://site-with-captcha.com")
 ```bash
 intelliscrape https://site.com --manual-captcha
 ```
+
+**Anti-bot challenge pages** (Cloudflare, PerimeterX, Akamai, DataDome) are automatically detected during the engine fallback chain. When detected, a browser opens for manual solving (Press and Hold, Turnstile, etc.). No API key needed.
 
 ### Proxy Configuration
 
@@ -1102,6 +1109,8 @@ for link in report.links:
 | Returns empty or widget text | Use `force_browser=True` — site is a JS SPA |
 | CAPTCHA blocking | Use `manual_captcha=True` or `api_key` + `captcha_provider` |
 | Blocked by anti-bot | Try `--engine camoufox` + residential proxy |
+| Anti-bot challenge opens browser but no CAPTCHA visible | The challenge may require Press and Hold — hold the button for 3-5 seconds |
+| False positive: "CAPTCHA detected" on normal site | v3.1.1+ uses smart detection — update with `pip install -U intelliscrape` |
 | Playwright not installed | `pip install playwright && playwright install chromium` |
 | Camoufox not installed | `pip install "camoufox[geoip]" && python -m camoufox fetch` |
 | nodriver not installed | `pip install nodriver` |

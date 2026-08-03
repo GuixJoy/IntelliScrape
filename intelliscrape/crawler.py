@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable, List, Optional, Set
+from typing import Callable, List, Optional, Set, TYPE_CHECKING
 from urllib.parse import urljoin, urlsplit
 
 from bs4 import BeautifulSoup
 
-from .core import scrape
-from .downloader import download_html, create_session
+if TYPE_CHECKING:
+    from .core import IntelliScrape
 
 
 @dataclass
@@ -90,6 +90,8 @@ def crawl(
     delay: float = 0.5,
     log: Optional[Callable[[str], None]] = None,
     on_page: Optional[Callable[[int, int], None]] = None,
+    scraper: Optional["IntelliScrape"] = None,
+    on_progress: Optional[Callable] = None,
 ) -> CrawlResult:
     """Crawl a website starting from the given URL.
 
@@ -105,6 +107,11 @@ def crawl(
         Logging function for progress updates.
     on_page : callable, optional
         Callback with (pages_done, pages_failed) after each page.
+    scraper : IntelliScrape, optional
+        Scraper instance with anti-bot detection, manual CAPTCHA, etc.
+        If None, a new default scraper is created.
+    on_progress : callable, optional
+        Progress callback for engine status updates.
 
     Returns
     -------
@@ -116,11 +123,14 @@ def crawl(
     if not url:
         raise ValueError("URL is required")
 
+    if scraper is None:
+        from .core import IntelliScrape
+        scraper = IntelliScrape()
+
     base_domain = urlsplit(url).netloc
     result = CrawlResult(base_url=url)
     visited: Set[str] = set()
     to_visit: Set[str] = {url}
-    session = create_session()
 
     if log:
         log(f"Starting crawl of {url}")
@@ -139,17 +149,16 @@ def crawl(
                 log(f"[{len(result.pages)+1}/{max_pages}] Scraping: {current_url}")
 
             try:
-                # Download the page (follow redirects)
-                html = download_html(url=current_url, session=session, allow_redirects=True)
+                # Use the scraper's full pipeline (anti-bot, CAPTCHA, fallback chain)
+                content = scraper.scrape(current_url, on_progress=on_progress)
 
-                # Extract links for further crawling
-                new_links = _extract_links(html, url)
+                # Extract links from raw HTML for further crawling
+                raw_html = scraper.scrape(current_url, return_raw=True, on_progress=on_progress)
+                new_links = _extract_links(raw_html, url)
                 for link in new_links:
                     if link not in visited:
                         to_visit.add(link)
 
-                # Scrape the content
-                content = scrape(current_url)
                 result.pages.append(ScrapeResult(url=current_url, content=content))
 
                 if log:
@@ -173,7 +182,7 @@ def crawl(
                 time.sleep(delay)
 
     finally:
-        session.close()
+        pass
 
     if log:
         log(f"\nCrawl complete: {result.total_pages} scraped, {result.total_failed} failed")

@@ -18,7 +18,7 @@ from .anti_detection.fingerprint import FingerprintGenerator
 from .anti_detection.headers import HeaderManager
 from .anti_detection.throttle import RateLimitConfig, RetryConfig, SmartThrottle
 from .anti_detection.tls import TLSConfig
-from .challenges.captcha import CaptchaDetector, CaptchaInfo, CaptchaSolver
+from .challenges.captcha import CaptchaDetector, CaptchaInfo, CaptchaSolver, CaptchaType
 from .cleaner import clean_text
 from .engines.base import ScrapeResult
 from .engines.playwright_stealth import PlaywrightStealthEngine
@@ -47,19 +47,108 @@ logger = logging.getLogger("intelliscrape")
 
 _ALLOWED_SCHEMES = {"http", "https"}
 
-_CLOUDFLARE_MARKERS = [
+_CLOUDFLARE_STRONG = [
     "checking your browser", "just a moment", "challenge-platform",
-    "cf-browser-verification", "enable javascript", "verify you are human",
-    "security check", "please wait", "turnstile", "challenge.js",
+    "cf-browser-verification",
 ]
+_CLOUDFLARE_WEAK = [
+    "challenges.cloudflare.com", "cf-turnstile", "challenge.js",
+    "enable javascript", "verify you are human",
+]
+
+_PERIMETERX_STRONG = [
+    "press and hold to confirm", "press & hold to confirm",
+    "press hold to confirm", "before we continue", "px-captcha",
+    "access to this page has been denied",
+]
+_PERIMETERX_WEAK = [
+    "reference id", "_pxhd", "_pxvid", "_px3",
+    "perimeterx", "human security",
+]
+
+_AKAMAI_STRONG = ["_abck", "ak_bmsc"]
+_AKAMAI_WEAK = ["access denied", "request denied", "akamai"]
+
+_DATADOME_STRONG = ["datadome"]
+_DATADOME_WEAK = ["blocked by", "access denied by"]
 
 
 def _is_cloudflare_blocked(html: str) -> bool:
-    """Check if HTML is a Cloudflare challenge page."""
+    """Check if HTML is a Cloudflare challenge page.
+
+    Uses a two-tier approach:
+    - Strong markers (only on actual challenge pages): 1 match = blocked
+    - Weak markers (can appear in docs/blogs): require 3+ AND page <50KB
+      (real challenge pages are tiny, content pages are large)
+    """
     if not html:
         return False
     lower = html.lower()
-    return any(marker in lower for marker in _CLOUDFLARE_MARKERS)
+    strong = sum(1 for m in _CLOUDFLARE_STRONG if m in lower)
+    if strong >= 1:
+        return True
+    weak = sum(1 for m in _CLOUDFLARE_WEAK if m in lower)
+    if weak >= 3 and len(html) < 50000:
+        return True
+    return False
+
+
+def _is_perimeterx_blocked(html: str) -> bool:
+    """Check if HTML is a PerimeterX / HUMAN Security challenge page."""
+    if not html:
+        return False
+    lower = html.lower()
+    strong = sum(1 for m in _PERIMETERX_STRONG if m in lower)
+    if strong >= 1:
+        return True
+    weak = sum(1 for m in _PERIMETERX_WEAK if m in lower)
+    if weak >= 3 and len(html) < 50000:
+        return True
+    return False
+
+
+def _is_akamai_blocked(html: str) -> bool:
+    """Check if HTML is an Akamai Bot Manager challenge page."""
+    if not html:
+        return False
+    lower = html.lower()
+    strong = sum(1 for m in _AKAMAI_STRONG if m in lower)
+    if strong >= 1:
+        return True
+    weak = sum(1 for m in _AKAMAI_WEAK if m in lower)
+    if weak >= 3 and len(html) < 50000:
+        return True
+    return False
+
+
+def _is_datadome_blocked(html: str) -> bool:
+    """Check if HTML is a DataDome challenge page."""
+    if not html:
+        return False
+    lower = html.lower()
+    strong = sum(1 for m in _DATADOME_STRONG if m in lower)
+    if strong >= 1:
+        return True
+    weak = sum(1 for m in _DATADOME_WEAK if m in lower)
+    if weak >= 3 and len(html) < 50000:
+        return True
+    return False
+
+
+def _is_any_antibot_blocked(html: str) -> Optional[str]:
+    """Check if HTML is blocked by any anti-bot vendor.
+
+    Returns the vendor name if detected, None otherwise.
+    """
+    if _is_cloudflare_blocked(html):
+        return "cloudflare"
+    if _is_perimeterx_blocked(html):
+        return "perimeterx"
+    if _is_akamai_blocked(html):
+        return "akamai"
+    if _is_datadome_blocked(html):
+        return "datadome"
+    return None
 
 
 class IntelliScrape:
@@ -582,14 +671,15 @@ class IntelliScrape:
             last_result = result
 
             if result.success:
-                # Check for Cloudflare challenge
-                if _is_cloudflare_blocked(result.html):
-                    tracker.engine_blocked(engine_name, "cloudflare", i + 1, total)
+                # Check for any anti-bot challenge (Cloudflare, PerimeterX, Akamai, DataDome)
+                blocked_vendor = _is_any_antibot_blocked(result.html)
+                if blocked_vendor:
+                    tracker.engine_blocked(engine_name, blocked_vendor, i + 1, total)
                     # Try manual CAPTCHA solve
                     solver = ManualCaptchaSolver()
                     solved = solver.solve_if_detected(url, result.html, self.session_manager.get_cookies())
                     if solved.solved:
-                        tracker.engine_solved(engine_name, "cloudflare_turnstile")
+                        tracker.engine_solved(engine_name, f"{blocked_vendor}_challenge")
                         # Re-fetch with solved cookies
                         fetch_kwargs["cookies"] = solved.cookies
                         result = self._fetch_with_engine(url, engine_name, **fetch_kwargs)
@@ -633,6 +723,16 @@ class IntelliScrape:
             return result
 
         captcha_info = CaptchaDetector.detect(result.html, url)
+
+        # Also check for anti-bot challenges (Cloudflare, PerimeterX, etc.)
+        if captcha_info is None:
+            blocked_vendor = _is_any_antibot_blocked(result.html)
+            if blocked_vendor:
+                captcha_info = CaptchaInfo(
+                    captcha_type=CaptchaType.TURNSTILE,
+                    page_url=url,
+                )
+
         if captcha_info is None:
             return result
 

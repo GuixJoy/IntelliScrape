@@ -108,7 +108,7 @@ class ManualCaptchaSolver:
 
             # Navigate to page
             try:
-                page.goto(url, wait_until="networkidle", timeout=30000)
+                page.goto(url, wait_until="domcontentloaded", timeout=30000)
             except Exception as e:
                 logger.warning(f"Navigation timed out, continuing: {e}")
 
@@ -186,8 +186,15 @@ class ManualCaptchaSolver:
                 "checking your browser",
                 "just a moment",
                 "verify you are human",
-                "security check",
-                "enable javascript",
+                "challenge-platform",
+                "cf-browser-verification",
+                "challenges.cloudflare.com",
+                "access to this page has been denied",
+                "press and hold to confirm",
+                "press & hold to confirm",
+                "before we continue",
+                "perimeterx",
+                "human security",
             ]
             for marker in challenge_markers:
                 if marker in html:
@@ -212,35 +219,28 @@ class ManualCaptchaSolver:
 
             # Check 1: CAPTCHA widget disappeared
             if initial_state["has_captcha_widget"] and not current_state["has_captcha_widget"]:
-                # Wait a bit more for page to load after solve
-                page.wait_for_timeout(2000)
-                return True
+                # Confirm challenge page is also gone
+                if not current_state["has_challenge_page"]:
+                    page.wait_for_timeout(2000)
+                    return True
 
-            # Check 2: Challenge page disappeared
+            # Check 2: Challenge page disappeared AND no new challenge markers
             if initial_state["has_challenge_page"] and not current_state["has_challenge_page"]:
                 page.wait_for_timeout(2000)
                 return True
 
-            # Check 3: URL changed (redirect after solve)
-            if current_state["url"] != initial_state["url"]:
-                page.wait_for_timeout(2000)
-                return True
-
-            # Check 4: New cookies appeared (e.g., cf_clearance)
+            # Check 3: New cookies appeared (e.g., cf_clearance, _pxvid)
             new_cookies = set(current_state["cookies"].keys()) - set(initial_state["cookies"].keys())
-            security_cookies = {"cf_clearance", "__cf_bm", "cf_chl_rc_ni", "captcha_verified"}
+            security_cookies = {
+                "cf_clearance", "__cf_bm", "cf_chl_rc_ni", "captcha_verified",
+                "_pxvid", "_px3", "_pxhd",
+            }
             if new_cookies & security_cookies:
-                page.wait_for_timeout(2000)
-                return True
-
-            # Check 5: Page content changed significantly (>50% different)
-            if current_state["html_length"] > 0 and initial_state["html_length"] > 0:
-                ratio = current_state["html_length"] / initial_state["html_length"]
-                if ratio > 1.5 or ratio < 0.5:
-                    # Significant content change
-                    if not current_state["has_captcha_widget"] and not current_state["has_challenge_page"]:
-                        page.wait_for_timeout(2000)
-                        return True
+                # Wait a moment and confirm challenge is gone
+                page.wait_for_timeout(3000)
+                check = self._capture_state(page, url)
+                if not check["has_challenge_page"] and not check["has_captcha_widget"]:
+                    return True
 
             # Progress update every 15 seconds
             if elapsed % 15 == 0:
@@ -273,8 +273,9 @@ class ManualCaptchaSolver:
         """
         captcha_info = CaptchaDetector.detect(html, url)
         if captcha_info is None:
-            # Also check for Cloudflare challenge in HTML
-            if self._is_cloudflare_challenge(html):
+            # Check for any anti-bot challenge (Cloudflare, PerimeterX, Akamai, DataDome)
+            vendor = self._detect_antibot_vendor(html)
+            if vendor:
                 captcha_info = CaptchaInfo(
                     captcha_type=CaptchaType.TURNSTILE,
                     page_url=url,
@@ -284,19 +285,50 @@ class ManualCaptchaSolver:
 
         return self.solve(url, captcha_info, existing_cookies)
 
-    def _is_cloudflare_challenge(self, html: str) -> bool:
-        """Check if HTML is a Cloudflare challenge page."""
+    def _detect_antibot_vendor(self, html: str) -> Optional[str]:
+        """Detect which anti-bot vendor is blocking the page.
+
+        Returns the vendor name if detected, None otherwise.
+        """
         if not html:
-            return False
+            return None
         lower = html.lower()
-        markers = [
-            "checking your browser",
-            "just a moment",
-            "enable javascript",
-            "verify you are human",
-            "challenge-platform",
-            "cf-browser-verification",
-            "attention required",
-            "security check",
+        html_len = len(html)
+
+        # Cloudflare — strong markers only appear on actual challenge pages
+        cf_strong = ["checking your browser", "just a moment", "challenge-platform", "cf-browser-verification"]
+        cf_weak = ["challenges.cloudflare.com", "cf-turnstile", "challenge.js"]
+        if sum(1 for m in cf_strong if m in lower) >= 1:
+            return "cloudflare"
+        if sum(1 for m in cf_weak if m in lower) >= 3 and html_len < 50000:
+            return "cloudflare"
+
+        # PerimeterX / HUMAN Security
+        px_strong = [
+            "press and hold to confirm", "press & hold to confirm",
+            "press hold to confirm", "before we continue", "px-captcha",
+            "access to this page has been denied",
         ]
-        return any(marker in lower for marker in markers)
+        px_weak = ["reference id", "_pxhd", "_pxvid", "_px3", "perimeterx", "human security"]
+        if sum(1 for m in px_strong if m in lower) >= 1:
+            return "perimeterx"
+        if sum(1 for m in px_weak if m in lower) >= 3 and html_len < 50000:
+            return "perimeterx"
+
+        # Akamai
+        ak_strong = ["_abck", "ak_bmsc"]
+        ak_weak = ["access denied", "request denied", "akamai"]
+        if sum(1 for m in ak_strong if m in lower) >= 1:
+            return "akamai"
+        if sum(1 for m in ak_weak if m in lower) >= 3 and html_len < 50000:
+            return "akamai"
+
+        # DataDome
+        dd_strong = ["datadome"]
+        dd_weak = ["blocked by", "access denied by"]
+        if sum(1 for m in dd_strong if m in lower) >= 1:
+            return "datadome"
+        if sum(1 for m in dd_weak if m in lower) >= 3 and html_len < 50000:
+            return "datadome"
+
+        return None

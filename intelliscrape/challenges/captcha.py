@@ -37,7 +37,6 @@ class CaptchaDetector:
         CaptchaType.RECAPTCHA_V2: [
             r'google\.com/recaptcha',
             r'g-recaptcha',
-            r'data-sitekey',
         ],
         CaptchaType.RECAPTCHA_V3: [
             r'google\.com/recaptcha/api\.js\?.*render=',
@@ -49,9 +48,7 @@ class CaptchaDetector:
             r'data-hcaptcha-widget-id',
         ],
         CaptchaType.TURNSTILE: [
-            r'challenges\.cloudflare\.com',
             r'cf-turnstile',
-            r'turnstile',
         ],
         CaptchaType.FUNCAPTCHA: [
             r'funcaptcha',
@@ -77,6 +74,11 @@ class CaptchaDetector:
             Detected CAPTCHA information.
         """
         if not html:
+            return None
+
+        # Real CAPTCHA challenge pages are tiny (<50KB).
+        # Large pages with embedded CAPTCHA widgets are content pages, not challenges.
+        if len(html) > 50000:
             return None
 
         html_lower = html.lower()
