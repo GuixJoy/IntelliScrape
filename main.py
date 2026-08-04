@@ -671,6 +671,22 @@ def version():
     return {"version": WEB_VERSION, "engine": "standalone", "dependencies": {"curl_cffi": CURL_AVAILABLE, "psycopg": DB_AVAILABLE, "playwright": playwright_ok}}
 
 
+LIBRARY_INSTALL_MSG = (
+    "This site uses advanced anti-bot protection that the cloud API cannot bypass. "
+    "Download the IntelliScrape library for full anti-detection capabilities:\n\n"
+    "  pip install intelliscrape\n\n"
+    "Then use it locally:\n\n"
+    "  from intelliscrape import scrape\n"
+    "  result = scrape(\"{url}\")\n\n"
+    "The library includes Playwright stealth, Camoufox, Nodriver, and manual CAPTCHA solving."
+)
+
+LIBRARY_INSTALL_MSG_SHORT = (
+    "This site uses anti-bot protection that the cloud API cannot bypass. "
+    "Install the library for full capabilities: pip install intelliscrape"
+)
+
+
 @app.post("/scrape")
 def scrape_url(req: ScrapeRequest, request: Request):
     """Scrape a website and return clean text."""
@@ -690,7 +706,8 @@ def scrape_url(req: ScrapeRequest, request: Request):
     except Exception as e:
         error_msg = str(e)
         logger.error(f"Scrape failed: {url_str} -> {error_msg}")
-        raise HTTPException(status_code=400, detail=error_msg)
+        user_msg = LIBRARY_INSTALL_MSG.format(url=url_str)
+        raise HTTPException(status_code=400, detail=user_msg)
 
 
 @app.post("/tech")
@@ -741,7 +758,7 @@ def detect_tech(req: TechRequest, request: Request):
     except Exception as e:
         error_msg = str(e)
         logger.error(f"Tech detection failed: {url_str} -> {error_msg}")
-        raise HTTPException(status_code=400, detail=error_msg)
+        raise HTTPException(status_code=400, detail=LIBRARY_INSTALL_MSG.format(url=url_str))
 
 
 class DetectApiRequest(BaseModel):
@@ -801,7 +818,7 @@ def detect_api(req: DetectApiRequest, request: Request):
     except Exception as e:
         error_msg = str(e)
         logger.error(f"API detection failed: {url_str} -> {error_msg}")
-        raise HTTPException(status_code=400, detail=error_msg)
+        raise HTTPException(status_code=400, detail=LIBRARY_INSTALL_MSG.format(url=url_str))
 
 
 if __name__ == "__main__":
