@@ -61,7 +61,7 @@ except ImportError:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-WEB_VERSION = "2.7.0"
+WEB_VERSION = "3.1.1"
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 if DATABASE_URL and "channel_binding=require" in DATABASE_URL:
@@ -189,9 +189,26 @@ app.add_middleware(
 )
 
 
+def _ensure_playwright_browsers():
+    """Install Playwright browsers if not already present."""
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["python", "-m", "playwright", "install", "chromium"],
+            capture_output=True, text=True, timeout=120,
+        )
+        if result.returncode == 0:
+            logger.info("Playwright chromium browser installed successfully")
+        else:
+            logger.warning(f"Playwright install returned code {result.returncode}: {result.stderr[:200]}")
+    except Exception as e:
+        logger.warning(f"Playwright browser install failed: {e}")
+
+
 @app.on_event("startup")
 def startup():
     init_db()
+    _ensure_playwright_browsers()
 
 
 class ScrapeRequest(BaseModel):
@@ -646,7 +663,12 @@ def health():
 
 @app.get("/version")
 def version():
-    return {"version": WEB_VERSION, "engine": "standalone", "dependencies": {"curl_cffi": CURL_AVAILABLE, "psycopg": DB_AVAILABLE}}
+    try:
+        from playwright.sync_api import sync_playwright
+        playwright_ok = True
+    except ImportError:
+        playwright_ok = False
+    return {"version": WEB_VERSION, "engine": "standalone", "dependencies": {"curl_cffi": CURL_AVAILABLE, "psycopg": DB_AVAILABLE, "playwright": playwright_ok}}
 
 
 @app.post("/scrape")
