@@ -187,7 +187,25 @@ Examples:
     parser.add_argument("--max-pages", type=int, default=50, help="Max pages to scrape")
 
     # Search
-    parser.add_argument("--search", type=str, help="Submit search query")
+    parser.add_argument("--search", type=str, help="Submit search query on a specific page")
+    parser.add_argument(
+        "--web-search",
+        type=str,
+        metavar="QUERY",
+        help="Search the web (Google → DuckDuckGo → Bing) and return a list of results",
+    )
+    parser.add_argument(
+        "--search-limit",
+        type=int,
+        default=10,
+        metavar="N",
+        help="Max results for --web-search (default: 10)",
+    )
+    parser.add_argument(
+        "--fetch-content",
+        action="store_true",
+        help="When used with --web-search, also scrape the full text of each result page",
+    )
 
     # Export
     parser.add_argument("--export", choices=["json", "csv", "excel", "sqlite", "text", "markdown"],
@@ -258,7 +276,11 @@ Examples:
     # Handle commands that don't require URL
     if args.find_proxies:
         return _find_proxies(args)
-    
+
+    # --web-search does not need a URL
+    if args.web_search:
+        return _web_search_cmd(args)
+
     if not args.url:
         parser.error("URL is required for most commands")
 
@@ -852,6 +874,88 @@ def _paginate(args) -> int:
             print(f"Page: {page['page']}")
             print(f"{'='*80}\n")
             print(page['content'])
+
+    return 0
+
+
+def _web_search_cmd(args) -> int:
+    """Run a web search and display results as a rich table."""
+    from .web_search import web_search as _web_search
+
+    query = args.web_search
+    limit = getattr(args, "search_limit", 10)
+    fetch_content = getattr(args, "fetch_content", False)
+
+    scraper = _create_scraper(args)
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task(
+            f"Searching for '{query}'" + (" + fetching content..." if fetch_content else "") + "...",
+            total=None,
+        )
+        report = _web_search(
+            query,
+            limit=limit,
+            fetch_content=fetch_content,
+            scraper=scraper,
+        )
+        progress.update(task, completed=True)
+
+    console.print()
+    console.print(Panel(
+        f"[bold]Query:[/bold] {report.query}\n"
+        f"[bold]Engine used:[/bold] {report.engine_used or '[yellow]none — all engines failed[/yellow]'}\n"
+        f"[bold]Results:[/bold] {report.total}",
+        title="Web Search",
+        border_style="blue",
+    ))
+
+    if not report.results:
+        console.print("[yellow]No results found.[/yellow]")
+        return 1
+
+    # Build the results table
+    table = Table(show_header=True, show_lines=True)
+    table.add_column("#", style="dim", width=3, justify="right")
+    table.add_column("Title", style="cyan", min_width=20, max_width=40)
+    table.add_column("URL", style="blue", min_width=25, max_width=45, overflow="fold")
+    table.add_column("Snippet", style="white", min_width=30, max_width=60)
+    if fetch_content:
+        table.add_column("Content preview", style="dim", min_width=30, max_width=50)
+
+    for r in report.results:
+        snippet_display = (r.snippet[:150] + "…") if len(r.snippet) > 150 else r.snippet
+        row = [str(r.rank), r.title, r.url, snippet_display]
+        if fetch_content:
+            if r.content:
+                preview = r.content[:120].replace("\n", " ").strip()
+                preview = (preview + "…") if len(r.content) > 120 else preview
+            else:
+                preview = "[dim]—[/dim]"
+            row.append(preview)
+        table.add_row(*row)
+
+    console.print(table)
+
+    # Export
+    if args.export:
+        return _export_content(
+            [r.to_dict() for r in report.results],
+            args.export,
+            args.output,
+            f"web_search:{query}",
+        )
+
+    if args.output:
+        import json as _json
+        with open(args.output, "w", encoding="utf-8") as f:
+            _json.dump(report.to_dict(), f, indent=2, ensure_ascii=False)
+        console.print(f"[green]Saved to {args.output}[/green]")
 
     return 0
 
