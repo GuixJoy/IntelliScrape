@@ -694,7 +694,7 @@ def scrape_url(req: ScrapeRequest, request: Request):
 
 
 @app.post("/tech")
-def detect_tech(req: TechRequest):
+def detect_tech(req: TechRequest, request: Request):
     """Detect website technology stack (frameworks, CMS, analytics, CDN, etc)."""
     url_str = str(req.url)
     logger.info(f"Tech detection request: {url_str}")
@@ -726,6 +726,10 @@ def detect_tech(req: TechRequest):
             )
         }
 
+        ip_address = request.client.host if request.client else "unknown"
+        user_agent = request.headers.get("user-agent", "unknown")
+        store_scrape(url_str, html[:500] if html else "", None, ip_address, user_agent)
+
         logger.info(f"Tech detection success: {url_str} ({len(tech.all_tech)} technologies)")
         return TechResponse(
             url=url_str,
@@ -756,7 +760,7 @@ class DetectApiResponse(BaseModel):
 
 
 @app.post("/detect-api")
-def detect_api(req: DetectApiRequest):
+def detect_api(req: DetectApiRequest, request: Request):
     """Detect API endpoints, third-party services, and exposed keys."""
     url_str = str(req.url)
     logger.info(f"API detection request: {url_str}")
@@ -778,6 +782,10 @@ def detect_api(req: DetectApiRequest):
             headers=headers,
             url=url_str,
         )
+
+        ip_address = request.client.host if request.client else "unknown"
+        user_agent = request.headers.get("user-agent", "unknown")
+        store_scrape(url_str, html[:500] if html else "", None, ip_address, user_agent)
 
         logger.info(f"API detection success: {url_str} ({len(report.endpoints)} endpoints, {len(report.third_party_apis)} services)")
         return DetectApiResponse(
