@@ -20,6 +20,7 @@ setup(
         "fastapi[standard]>=0.100.0",
         "uvicorn>=0.23.0",
         "pydantic>=2.0.0",
+        "defusedxml",
     ],
     extras_require={
         "stealth": ["nodriver>=0.30"],

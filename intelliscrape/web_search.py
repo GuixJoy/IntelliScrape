@@ -29,13 +29,16 @@ from __future__ import annotations
 import logging
 import sys
 import time
-import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
-from urllib.parse import parse_qs, quote_plus, unquote, urlsplit
+from urllib.parse import parse_qs, quote_plus, urlsplit
+from xml.etree.ElementTree import ParseError as ETParseError
 
 from bs4 import BeautifulSoup
+from defusedxml import ElementTree as ET
+
+from .exceptions import IntelliScrapeError
 
 if TYPE_CHECKING:
     from .core import IntelliScrape
@@ -179,7 +182,7 @@ def _decode_ddg_url(href: str) -> str:
 
     qs = parse_qs(parsed.query)
     if "uddg" in qs:
-        return unquote(qs["uddg"][0])
+        return qs["uddg"][0]
 
     # Direct URL (no redirect wrapper)
     return href if href.startswith("http") else ""
@@ -196,7 +199,7 @@ def _decode_bing_news_url(href: str) -> str:
     parsed = urlsplit(href)
     qs = parse_qs(parsed.query)
     if "url" in qs:
-        return unquote(qs["url"][0])
+        return qs["url"][0]
     return href if href.startswith("http") else ""
 
 
@@ -308,7 +311,7 @@ def _parse_bing_news_rss(xml_text: str, limit: int) -> List[SearchResult]:
     """
     try:
         root = ET.fromstring(xml_text)
-    except ET.ParseError:
+    except ETParseError:
         return []
 
     channel = root.find("channel")
@@ -361,7 +364,7 @@ def _parse_google_news_rss(xml_text: str, limit: int) -> List[SearchResult]:
     """
     try:
         root = ET.fromstring(xml_text)
-    except ET.ParseError:
+    except ETParseError:
         return []
 
     channel = root.find("channel")
@@ -524,7 +527,7 @@ class WebSearch:
             for attempt in range(max_retries + 1):
                 try:
                     return func()
-                except (EngineError, ParseError, ContentFetchError) as e:
+                except (EngineError, ParseError, ContentFetchError, IntelliScrapeError) as e:
                     if attempt == max_retries:
                         raise
                     logger.warning("Attempt %d/%d failed for %s: %s", attempt + 1, max_retries + 1, engine_name, e)
@@ -551,7 +554,7 @@ class WebSearch:
             except EngineBlockedError:
                 logger.warning("%s returned a block page — trying next engine.", engine_name)
                 continue
-            except (EngineError, ParseError, ET.ParseError):
+            except (EngineError, ParseError, ETParseError):
                 logger.warning("Engine %s failed after retries — trying next engine.", engine_name)
                 continue
             except Exception as exc:
@@ -593,17 +596,13 @@ class WebSearch:
                 result.content = None
             return result
 
-        with ThreadPoolExecutor(max_workers=max_concurrent) as pool:
+        pool = ThreadPoolExecutor(max_workers=max_concurrent)
+        try:
             futures = {pool.submit(_scrape_one, r): r for r in results}
             populated: List[SearchResult] = []
             for future in as_completed(futures):
                 try:
-                    populated.append(future.result(timeout=30))
-                except (TimeoutError, FutureTimeoutError) as exc:
-                    original = futures[future]
-                    logger.error("Timeout while processing %s: %s", original.url, exc)
-                    original.content = None
-                    populated.append(original)
+                    populated.append(future.result())
                 except ContentFetchError as exc:
                     original = futures[future]
                     logger.error("Content fetch error for %s: %s", original.url, exc)
@@ -614,6 +613,8 @@ class WebSearch:
                     logger.warning("Unexpected error for %s: %s", original.url, exc)
                     original.content = None
                     populated.append(original)
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
 
         populated.sort(key=lambda r: r.rank)
         return populated
@@ -672,9 +673,12 @@ def web_search(
     >>> print(report.results[0].content[:300])
     """
     ws = WebSearch(scraper=scraper, **scraper_kwargs)
-    return ws.search(
-        query,
-        limit=limit,
-        fetch_content=fetch_content,
-        max_concurrent=max_concurrent,
-    )
+    try:
+        return ws.search(
+            query,
+            limit=limit,
+            fetch_content=fetch_content,
+            max_concurrent=max_concurrent,
+        )
+    finally:
+        ws.close()

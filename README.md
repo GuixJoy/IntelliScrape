@@ -12,7 +12,7 @@ A Python web scraping library with anti-detection, TLS fingerprint impersonation
 [![License](https://img.shields.io/pypi/l/intelliscrape?color=yellow)](https://github.com/GuixJoy/IntelliScrape/blob/main/LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/GuixJoy/IntelliScrape?logo=github)](https://github.com/GuixJoy/IntelliScrape)
 
-[Installation](#installation) | [Quick Start](#quick-start) | [CLI Reference](#cli-reference) | [Library API](#library-api-reference) | [Web Search](#web_search----web-search) | [Examples](#examples) | [Engine System](#engine-system) | [Features](#features)
+[Installation](#installation) | [Quick Start](#quick-start) | [CLI Reference](#cli-reference) | [Library API](#library-api-reference) | [Web Search](#web_search--web-search) | [Examples](#examples) | [Engine System](#engine-system) | [Features](#features)
 
 </div>
 
@@ -197,7 +197,7 @@ intelliscrape [URL] [OPTIONS]
 
 | Flag | Description |
 |---|---|
-| `--web-search QUERY` | Search the web (Google → DuckDuckGo → Bing) and return a list of results |
+| `--web-search QUERY` | Search the web (DuckDuckGo → Google News → Bing News) and return a list of results |
 | `--search-limit N` | Max results for `--web-search` (default: 10) |
 | `--fetch-content` | Also scrape the full text of each result page |
 
@@ -487,7 +487,7 @@ print(f"Broken: {report.summary.broken}")
 
 ### `web_search()` — Web Search
 
-Search Google, DuckDuckGo, and Bing with automatic engine fallback. Returns a structured list of results and optionally scrapes the full content of each result page in one call.
+Search DuckDuckGo, Google News, and Bing News with automatic engine fallback. Returns a structured list of results and optionally scrapes the full content of each result page in one call.
 
 #### `web_search()` — Convenience Function
 
@@ -513,7 +513,7 @@ for r in report.results:
 
 Returns `WebSearchReport`:
 - `report.query` — original query string
-- `report.engine_used` — which engine returned results (`google`, `duckduckgo`, `bing`)
+- `report.engine_used` — which engine returned results (`duckduckgo`, `google_news`, `bing_news`)
 - `report.total` — number of results
 - `report.results` — list of `SearchResult` objects
 - `report.to_dict()` — JSON-serialisable dict
@@ -571,7 +571,6 @@ scraper = IntelliScrape()
 report = scraper.search_web("python web scraping", limit=10, fetch_content=False)
 for r in report.results:
     print(r.rank, r.title, r.url)
-```
 ```
 
 ##### `find_free_proxies(test=True)`

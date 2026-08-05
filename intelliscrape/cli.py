@@ -192,7 +192,7 @@ Examples:
         "--web-search",
         type=str,
         metavar="QUERY",
-        help="Search the web (Google → DuckDuckGo → Bing) and return a list of results",
+        help="Search the web (DuckDuckGo → Google News → Bing News) and return a list of results",
     )
     parser.add_argument(
         "--search-limit",
@@ -277,14 +277,14 @@ Examples:
     if args.find_proxies:
         return _find_proxies(args)
 
-    # --web-search does not need a URL
-    if args.web_search:
-        return _web_search_cmd(args)
-
-    if not args.url:
+    if not args.url and not args.web_search:
         parser.error("URL is required for most commands")
 
     try:
+        # --web-search does not need a URL
+        if args.web_search:
+            return _web_search_cmd(args)
+
         # Handle analyze command
         if args.analyze:
             return _analyze(args)
