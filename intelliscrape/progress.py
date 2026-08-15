@@ -156,5 +156,4 @@ class ProgressTracker:
             engine="",
             status="all_failed",
             message="All engines failed",
-            elapsed_seconds=self.elapsed,
         )

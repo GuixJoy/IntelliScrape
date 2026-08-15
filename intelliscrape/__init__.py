@@ -109,6 +109,12 @@ from .link_checker import (
     LinkStatus,
     LinkType,
 )
+from .web_search import (
+    WebSearch,
+    WebSearchReport,
+    SearchResult,
+    web_search,
+)
 from .tech.extractor import TechStack, TechInfo, TechStackExtractor
 from .api_detector.extractor import ApiReport, ApiEndpoint, ApiKeyExposure, ApiDetector
 
@@ -192,6 +198,11 @@ __all__ = [
     "SingleLinkResult",
     "LinkStatus",
     "LinkType",
+    # Web search
+    "WebSearch",
+    "WebSearchReport",
+    "SearchResult",
+    "web_search",
     # Website Intelligence
     "TechStack",
     "TechInfo",

@@ -902,6 +902,52 @@ class IntelliScrape:
             url=url,
         )
 
+    def search_web(
+        self,
+        query: str,
+        *,
+        limit: int = 10,
+        fetch_content: bool = False,
+        max_concurrent: int = 3,
+    ):
+        """Search the web and return a structured list of results.
+
+        Tries DuckDuckGo first, then Google News, then Bing on auto-fallback.
+
+        Parameters
+        ----------
+        query : str
+            Search query string.
+        limit : int
+            Maximum number of results to return (default: 10).
+        fetch_content : bool
+            If ``True``, scrape the full page text of each result URL
+            concurrently.  Per-URL failures warn and continue.
+        max_concurrent : int
+            Parallel workers for content fetching (default: 3).
+
+        Returns
+        -------
+        WebSearchReport
+            Report with ``engine_used``, ``total``, and ``results``
+            (list of :class:`~intelliscrape.web_search.SearchResult`).
+
+        Examples
+        --------
+        >>> scraper = IntelliScrape()
+        >>> report = scraper.search_web("python web scraping", limit=5)
+        >>> for r in report.results:
+        ...     print(r.rank, r.title, r.url)
+        """
+        from .web_search import WebSearch
+        ws = WebSearch(scraper=self)
+        return ws.search(
+            query,
+            limit=limit,
+            fetch_content=fetch_content,
+            max_concurrent=max_concurrent,
+        )
+
     def _wait_for_manual_captcha(self, url: str, captcha_info: CaptchaInfo) -> ScrapeResult:
         """Open a visible browser and wait for the user to solve a CAPTCHA.
 

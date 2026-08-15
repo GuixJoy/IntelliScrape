@@ -12,7 +12,7 @@ A Python web scraping library with anti-detection, TLS fingerprint impersonation
 [![License](https://img.shields.io/pypi/l/intelliscrape?color=yellow)](https://github.com/GuixJoy/IntelliScrape/blob/main/LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/GuixJoy/IntelliScrape?logo=github)](https://github.com/GuixJoy/IntelliScrape)
 
-[Installation](#installation) | [Quick Start](#quick-start) | [CLI Reference](#cli-reference) | [Library API](#library-api-reference) [Examples](#examples) | [Engine System](#engine-system) | [Features](#features)
+[Installation](#installation) | [Quick Start](#quick-start) | [CLI Reference](#cli-reference) | [Library API](#library-api-reference) | [Web Search](#web_search--web-search) | [Examples](#examples) | [Engine System](#engine-system) | [Features](#features)
 
 </div>
 
@@ -191,7 +191,15 @@ intelliscrape [URL] [OPTIONS]
 |---|---|
 | `--paginate` | Auto-follow pagination |
 | `--max-pages N` | Max pages (default: 50) |
-| `--search QUERY` | Submit search query |
+| `--search QUERY` | Submit search query on a specific page |
+
+### Web Search
+
+| Flag | Description |
+|---|---|
+| `--web-search QUERY` | Search the web (DuckDuckGo → Google News → Bing News) and return a list of results |
+| `--search-limit N` | Max results for `--web-search` (default: 10) |
+| `--fetch-content` | Also scrape the full text of each result page |
 
 ### Crawl
 
@@ -287,6 +295,15 @@ intelliscrape https://example.com --mirror --mirror-proxy socks5://proxy:1080
 
 # Mirror excluded patterns
 intelliscrape https://example.com --mirror --mirror-exclude "*.pdf" --mirror-exclude "/admin/*"
+
+# Web search (no URL needed)
+intelliscrape --web-search "python web scraping"
+intelliscrape --web-search "openai news" --search-limit 5
+intelliscrape --web-search "site:github.com python scraper" --search-limit 20 --export json -o results.json
+
+# Web search + scrape each result page
+intelliscrape --web-search "best python libraries" --fetch-content
+intelliscrape --web-search "fastapi tutorial" --fetch-content --export json -o results.json
 ```
 
 ---
@@ -464,6 +481,96 @@ from intelliscrape import check_links
 
 report = check_links("https://example.com")
 print(f"Broken: {report.summary.broken}")
+```
+
+---
+
+### `web_search()` — Web Search
+
+Search DuckDuckGo, Google News, and Bing News with automatic engine fallback. Returns a structured list of results and optionally scrapes the full content of each result page in one call.
+
+#### `web_search()` — Convenience Function
+
+```python
+from intelliscrape import web_search
+
+report = web_search("python web scraping", limit=10)
+print(f"Engine: {report.engine_used}, Results: {report.total}")
+
+for r in report.results:
+    print(f"  {r.rank}. {r.title}")
+    print(f"     {r.url}")
+    print(f"     {r.snippet[:100]}")
+```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `query` | str | required | Search query string |
+| `limit` | int | 10 | Maximum number of results |
+| `fetch_content` | bool | False | Scrape full text of each result URL |
+| `max_concurrent` | int | 3 | Parallel workers for content fetching |
+| `scraper` | IntelliScrape | None | Existing scraper instance to reuse |
+
+Returns `WebSearchReport`:
+- `report.query` — original query string
+- `report.engine_used` — which engine returned results (`duckduckgo`, `google_news`, `bing_news`)
+- `report.total` — number of results
+- `report.results` — list of `SearchResult` objects
+- `report.to_dict()` — JSON-serialisable dict
+
+Each `SearchResult`:
+- `result.rank` — 1-based position
+- `result.title` — page title
+- `result.url` — result URL
+- `result.snippet` — short description from the SERP
+- `result.content` — full scraped page text (only when `fetch_content=True`, `None` otherwise)
+- `result.source` — engine that returned this result
+- `result.to_dict()` — JSON-serialisable dict
+
+**With full page content:**
+
+```python
+report = web_search("openai news", limit=5, fetch_content=True)
+for r in report.results:
+    if r.content:
+        print(f"{r.title}: {r.content[:300]}")
+```
+
+**Export results to JSON:**
+
+```python
+from intelliscrape import web_search, DataExporter
+
+report = web_search("python scraping", limit=10)
+DataExporter.to_json([r.to_dict() for r in report.results], file="results.json")
+```
+
+#### `WebSearch` — Class
+
+```python
+from intelliscrape import WebSearch, IntelliScrape
+
+# Reuse an existing scraper (proxies, settings, etc. carry over)
+scraper = IntelliScrape(use_free_proxies=True)
+ws = WebSearch(scraper=scraper)
+
+report = ws.search("site:github.com python scraper", limit=20)
+```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `scraper` | IntelliScrape | None | Existing scraper; creates one if not provided |
+| `**scraper_kwargs` | — | — | Forwarded to `IntelliScrape()` when `scraper` is not given |
+
+**`IntelliScrape.search_web()` method:**
+
+```python
+from intelliscrape import IntelliScrape
+
+scraper = IntelliScrape()
+report = scraper.search_web("python web scraping", limit=10, fetch_content=False)
+for r in report.results:
+    print(r.rank, r.title, r.url)
 ```
 
 ##### `find_free_proxies(test=True)`
@@ -1098,6 +1205,34 @@ report = check_links("https://example.com", ignore_external=True)
 for link in report.links:
     if not link.is_ok:
         print(f"BROKEN: {link.url} -> {link.status_code}")
+```
+
+### Web Search
+
+```python
+from intelliscrape import web_search
+
+# Basic search — returns list of results with title, URL, snippet
+report = web_search("python web scraping", limit=10)
+print(f"Engine: {report.engine_used}  Results: {report.total}")
+for r in report.results:
+    print(f"  {r.rank}. {r.title}")
+    print(f"     {r.url}")
+
+# With full page content (Firecrawl-style, one call)
+report = web_search("fastapi tutorial", limit=5, fetch_content=True)
+for r in report.results:
+    if r.content:
+        print(f"{r.title}: {r.content[:300]}")
+
+# Export to JSON
+from intelliscrape import DataExporter
+DataExporter.to_json([r.to_dict() for r in report.results], file="results.json")
+
+# Reuse an existing scraper instance (proxies, config carry over)
+from intelliscrape import IntelliScrape
+scraper = IntelliScrape(use_free_proxies=True)
+report = scraper.search_web("site:github.com python scraper", limit=20)
 ```
 
 ---
