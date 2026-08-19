@@ -136,6 +136,21 @@ class BacklinkAnalyzer:
         re.IGNORECASE,
     )
 
+    # Bing appends redirect/footer noise to almost every result page. These
+    # are redirect/link-shortener services that never contain real content
+    # linking to a target, so they are dropped before verification.
+    _BING_JUNK_DOMAINS = {
+        "go.microsoft.com",
+        "link.com",
+        "app.link.com",
+        "phonelink.microsoft.com",
+        "tinyurl.com",
+        "bit.ly",
+        "t.co",
+        "ow.ly",
+        "goo.gl",
+    }
+
     @staticmethod
     def find(
         target: str,
@@ -272,11 +287,20 @@ class BacklinkAnalyzer:
     def _search_engine_query(engine: str, domain: str, limit: int) -> List[str]:
         """Query a search engine for pages linking to the domain.
 
+        Note: Google's ``link:`` operator returns an ``enablejs`` page to plain
+        HTTP clients (0 results), and Bing's ``link:`` operator is treated as a
+        keyword match for the word "link" (returns link.com, tinyurl, fwlink,
+        etc. — not real backlinks). Both engines respond to the mention query
+        ``"domain" -site:domain``, which surfaces pages that reference the
+        target and are then verified by scraping.
+
         Returns a list of result URLs.
         """
         from curl_cffi import requests as curl_requests
 
-        query = f'link:{domain} -site:{domain}'
+        # Mention query works on both engines; for Bing it is the only
+        # reliable way to surface actual referring pages.
+        query = f'"{domain}" -site:{domain}'
         encoded = quote_plus(query)
 
         if engine == "google":
@@ -302,6 +326,16 @@ class BacklinkAnalyzer:
         return BacklinkAnalyzer._parse_search_results(resp.text, engine, domain)
 
     @staticmethod
+    def _is_junk_url(parsed) -> bool:
+        """Return True for redirect services and search-engine widget noise."""
+        if parsed.netloc in BacklinkAnalyzer._BING_JUNK_DOMAINS:
+            return True
+        # Bing's "related searches" widget leaks Google property pages
+        if parsed.netloc == "google.com" or parsed.netloc.endswith(".google.com"):
+            return True
+        return False
+
+    @staticmethod
     def _parse_search_results(html: str, engine: str, target_domain: str) -> List[str]:
         """Extract result URLs from search engine HTML."""
         soup = BeautifulSoup(html, "html.parser")
@@ -317,11 +351,19 @@ class BacklinkAnalyzer:
                     if match:
                         url = match.group(1)
                         parsed = urlparse(url)
-                        if parsed.netloc and parsed.netloc != target_domain:
+                        if (
+                            parsed.netloc
+                            and parsed.netloc != target_domain
+                            and not BacklinkAnalyzer._is_junk_url(parsed)
+                        ):
                             urls.append(url)
                 elif href.startswith("http"):
                     parsed = urlparse(href)
-                    if parsed.netloc and target_domain not in parsed.netloc:
+                    if (
+                        parsed.netloc
+                        and target_domain not in parsed.netloc
+                        and not BacklinkAnalyzer._is_junk_url(parsed)
+                    ):
                         # Only include if it looks like a search result
                         parent = a.find_parent(["div", "li"])
                         if parent and ("data-sokoban" in str(parent) or "g" in parent.get("class", [])):
@@ -335,15 +377,23 @@ class BacklinkAnalyzer:
                 decoded = BacklinkAnalyzer._decode_bing_redirect(href)
                 if decoded:
                     parsed = urlparse(decoded)
-                    if parsed.netloc and target_domain not in parsed.netloc and "bing.com" not in parsed.netloc:
+                    if (
+                        parsed.netloc
+                        and target_domain not in parsed.netloc
+                        and "bing.com" not in parsed.netloc
+                        and not BacklinkAnalyzer._is_junk_url(parsed)
+                    ):
                         urls.append(decoded)
                     continue
                 if href.startswith("http"):
                     parsed = urlparse(href)
-                    if parsed.netloc and target_domain not in parsed.netloc:
-                        # Skip Bing's own pages
-                        if "bing.com" not in parsed.netloc:
-                            urls.append(href)
+                    if (
+                        parsed.netloc
+                        and target_domain not in parsed.netloc
+                        and "bing.com" not in parsed.netloc
+                        and not BacklinkAnalyzer._is_junk_url(parsed)
+                    ):
+                        urls.append(href)
 
         return urls
 
