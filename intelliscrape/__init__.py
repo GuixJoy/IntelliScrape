@@ -25,6 +25,11 @@ Features:
 - Request/response interception
 - Link checking (status, categorization, broken link detection)
 - Website Intelligence (detect frameworks, CMS, analytics, CDN, hosting, and more)
+- SEO auditing (0-100 score, 11 checks, content/link/heading/image/technical/performance analysis)
+- Backlink discovery (Google/Bing link: queries, anchor and rel analysis)
+- API detection (REST/GraphQL/WebSocket endpoints, exposed keys)
+- Markdown corpus for LLM ingestion (llms.txt / llms-full.txt / index.md)
+- Website mirroring (HTTrack-style, WARC/ZIP export)
 
 Quick Start:
     >>> from intelliscrape import scrape
@@ -63,9 +68,10 @@ Website Intelligence:
     {'frameworks': ['next.js'], 'cms': [], 'analytics': ['google analytics'], ...}
 """
 
-from .core import IntelliScrape, scrape
+from .core import IntelliScrape, scrape, analyze_seo, find_backlinks
 from .crawler import crawl, CrawlResult, ScrapeResult
 from .track import SiteMirror, MirrorConfig, mirror as mirror_site
+from .markdown import html_to_markdown, markdown_site, MarkdownConfig, MarkdownResult
 from .intelligent import SiteAnalyzer, SiteAnalysis, SiteType, ProtectionLevel, SmartRateLimiter
 from .proxy import (
     ProxyConfig,
@@ -117,13 +123,21 @@ from .web_search import (
 )
 from .tech.extractor import TechStack, TechInfo, TechStackExtractor
 from .api_detector.extractor import ApiReport, ApiEndpoint, ApiKeyExposure, ApiDetector
+from .seo.analyzer import (
+    SEOAnalyzer, SEOReport, SEOCheck, SEOIssue,
+    ContentAnalysis, LinkAnalysis, HeadingAnalysis,
+    ImageAnalysis, TechnicalAnalysis, PerformanceAnalysis,
+)
+from .seo.backlinks import BacklinkAnalyzer, BacklinkReport, Backlink
 
-__version__ = "3.1.1"
+__version__ = "3.1.2"
 
 __all__ = [
     # Main API
     "IntelliScrape",
     "scrape",
+    "analyze_seo",
+    "find_backlinks",
     # Async API
     "AsyncIntelliScrape",
     "scrape_async",
@@ -212,10 +226,30 @@ __all__ = [
     "ApiEndpoint",
     "ApiKeyExposure",
     "ApiDetector",
+    # SEO Analysis
+    "SEOAnalyzer",
+    "SEOReport",
+    "SEOCheck",
+    "SEOIssue",
+    "ContentAnalysis",
+    "LinkAnalysis",
+    "HeadingAnalysis",
+    "ImageAnalysis",
+    "TechnicalAnalysis",
+    "PerformanceAnalysis",
+    # Backlink Discovery
+    "BacklinkAnalyzer",
+    "BacklinkReport",
+    "Backlink",
     # Re-exports
     "ScrapeResult",
     # HTTrack mirroring
     "SiteMirror",
     "MirrorConfig",
     "mirror_site",
+    # Markdown / LLM ingestion
+    "html_to_markdown",
+    "markdown_site",
+    "MarkdownConfig",
+    "MarkdownResult",
 ]

@@ -57,6 +57,17 @@ class MirrorConfig:
     save_zip: bool = False
     save_warc: bool = False
 
+    # --- Markdown corpus mode (output_format="markdown") ---
+    # When enabled, HTML pages are converted to Markdown instead of being
+    # saved as rewritten HTML. Asset fetching is disabled automatically
+    # (only HTML pages are crawled).
+    output_format: str = "html"  # "html" | "markdown"
+    markdown_merge: bool = True      # write llms.txt + llms-full.txt
+    markdown_frontmatter: bool = True  # YAML frontmatter per page
+    markdown_keep_nav: bool = False  # keep nav/footer/aside content
+    markdown_images: bool = False    # keep image references
+    markdown_json_ld: bool = True    # append JSON-LD as code block
+
     # --- Engine ---
     engine: str = "static"  # static | playwright | camoufox | nodriver | auto
 
@@ -72,6 +83,15 @@ class MirrorConfig:
     def __post_init__(self) -> None:
         if self.url and not self.url.startswith(("http://", "https://")):
             self.url = "https://" + self.url
+
+        # Markdown corpora only need HTML pages — never fetch assets.
+        if self.output_format == "markdown":
+            self.fetch_css = False
+            self.fetch_js = False
+            self.fetch_images = False
+            self.fetch_fonts = False
+            self.fetch_media = False
+            self.fetch_documents = False
 
     # --- Scope helpers ---------------------------------------------------
 

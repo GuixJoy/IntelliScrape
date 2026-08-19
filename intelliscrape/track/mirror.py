@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import re
 import time
 import uuid
 import zipfile
@@ -26,6 +27,8 @@ from .rewriter import URLRewriter
 from .cache import MirrorCache
 from .robots import RobotsParser
 from .filters import URLFilter
+
+from ..markdown import html_to_markdown
 
 
 # ---------------------------------------------------------------------------
@@ -47,6 +50,12 @@ class MirrorResult:
     errors: int = 0
     skipped_robots: int = 0
     skipped_filtered: int = 0
+    # --- Markdown corpus mode ---
+    markdown_pages: int = 0
+    markdown_chars: int = 0
+    llms_file: str | None = None
+    llms_full_file: str | None = None
+    index_file: str | None = None
 
 
 @dataclass
@@ -69,6 +78,22 @@ class _DownloadResult:
     content: bytes
     headers: dict[str, str] = field(default_factory=dict)
     redirected_url: str | None = None
+
+
+def _extract_frontmatter_value(md: str, key: str) -> str:
+    """Pull a ``key: value`` line out of a leading YAML frontmatter block."""
+    if not md or not md.startswith("---"):
+        return ""
+    lines = md.split("\n")
+    for line in lines[1:]:
+        if line.strip() == "---":
+            break
+        if line.startswith(key + ":"):
+            val = line[len(key) + 1:].strip()
+            if len(val) >= 2 and val.startswith('"') and val.endswith('"'):
+                val = val[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+            return val
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -109,6 +134,9 @@ class SiteMirror:
         self._stats = _WorkerStats()
         self._warc_file = None
         self._progress_callback = None
+        # Markdown corpus mode state
+        self._md_pages: list[dict] = []
+        self._md_chars = 0
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -159,8 +187,13 @@ class SiteMirror:
             w.cancel()
 
         # Generate directory indices
-        if self.config.generate_index:
+        if self.config.generate_index and self.config.output_format != "markdown":
             self._generate_indices(output)
+
+        # Generate Markdown corpus files (llms.txt / llms-full.txt / index.md)
+        md_files = self._generate_markdown_outputs(output) if (
+            self.config.output_format == "markdown"
+        ) else {}
 
         # Save cache
         if self._cache:
@@ -189,6 +222,11 @@ class SiteMirror:
             errors=self._stats.errors,
             skipped_robots=self._stats.skipped_robots,
             skipped_filtered=self._stats.skipped_filtered,
+            markdown_pages=len(self._md_pages),
+            markdown_chars=self._md_chars,
+            llms_file=md_files.get("llms"),
+            llms_full_file=md_files.get("llms_full"),
+            index_file=md_files.get("index"),
         )
 
     # ------------------------------------------------------------------
@@ -280,6 +318,10 @@ class SiteMirror:
             entry = self._cache.get(url)
             if entry and entry.save_path:
                 self._rewriter.register(url, entry.save_path)
+                if cfg.output_format == "markdown" and (
+                    not entry.content_type or entry.content_type.startswith("text/html")
+                ):
+                    self._restore_from_cache(url, entry)
                 return
 
         # --- Download ---
@@ -288,11 +330,15 @@ class SiteMirror:
             self._stats.errors += 1
             return
 
-        # Handle redirect
-        if result.redirected_url and result.redirected_url != url:
-            if result.redirected_url not in visited:
-                visited.add(result.redirected_url)
-                await queue.put((result.redirected_url, depth, url))
+        # Handle redirect (skip when only a trailing slash differs)
+        if (
+            result.redirected_url
+            and result.redirected_url != url
+            and result.redirected_url.rstrip("/") != url.rstrip("/")
+            and result.redirected_url not in visited
+        ):
+            visited.add(result.redirected_url)
+            await queue.put((result.redirected_url, depth, url))
 
         # Save path
         save_path = self._namer.compute_path(url)
@@ -309,7 +355,29 @@ class SiteMirror:
 
         # Write file
         if cfg.save_files:
-            if asset_class in ("html", "css") and cfg.url_mode != "keep_original":
+            if asset_class == "html" and cfg.output_format == "markdown":
+                # --- Markdown corpus mode: convert page to .md ---
+                decoded = result.content.decode("utf-8", errors="replace")
+                md_save_path = self._md_save_path(save_path)
+                md = html_to_markdown(
+                    decoded,
+                    url,
+                    frontmatter=cfg.markdown_frontmatter,
+                    keep_nav=cfg.markdown_keep_nav,
+                    include_images=cfg.markdown_images,
+                    include_json_ld=cfg.markdown_json_ld,
+                )
+                if md.strip():
+                    md_full = Path(cfg.output_dir) / md_save_path
+                    md_full.parent.mkdir(parents=True, exist_ok=True)
+                    md_full.write_text(md, encoding="utf-8")
+                    self._md_pages.append(self._md_page_meta(url, md, md_save_path))
+                    self._md_chars += len(md)
+                    save_path = md_save_path
+                else:
+                    self._stats.errors += 1
+                    save_path = ""
+            elif asset_class in ("html", "css") and cfg.url_mode != "keep_original":
                 decoded = result.content.decode("utf-8", errors="replace")
                 if asset_class == "html":
                     decoded = self._rewriter.rewrite_html(decoded, url)
@@ -320,14 +388,15 @@ class SiteMirror:
                 full_path.write_bytes(result.content)
 
         # Register mapping
-        self._rewriter.register(url, save_path)
+        if save_path:
+            self._rewriter.register(url, save_path)
 
         # Write WARC record
         if self._warc_file:
             self._write_warc_record(url, result)
 
         # Cache
-        if self._cache:
+        if self._cache and save_path:
             self._cache.set(
                 url,
                 save_path,
@@ -378,12 +447,135 @@ class SiteMirror:
             aurl = asset.url
             if aurl in visited:
                 continue
+            if any(v.rstrip("/") == aurl.rstrip("/") for v in visited):
+                continue
             if not self.config.is_in_scope(self.config.url, aurl):
                 continue
             if not self.config.should_fetch(aurl):
                 continue
             visited.add(aurl)
             await queue.put((aurl, depth + 1, referer))
+
+    # ------------------------------------------------------------------
+    # Markdown corpus mode helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _md_save_path(save_path: str) -> str:
+        """Map an HTML save path to its Markdown equivalent (``.md``)."""
+        from .naming import _split_ext
+
+        name, _ext = _split_ext(save_path)
+        return name + ".md"
+
+    def _md_page_meta(self, url: str, md: str, save_path: str) -> dict:
+        """Build metadata for a converted page (used by llms.txt / index)."""
+        from ..markdown import strip_frontmatter
+
+        title = _extract_frontmatter_value(md, "title")
+        description = _extract_frontmatter_value(md, "description")
+        body = strip_frontmatter(md)
+        if not title:
+            m = re.match(r"^#\s+(.+)$", body, re.MULTILINE)
+            title = m.group(1).strip() if m else url
+        summary = description
+        if not summary:
+            for line in body.split("\n"):
+                line = line.strip()
+                if line and not line.startswith(("#", "-", ">", "|", "```")):
+                    summary = line[:160]
+                    break
+        return {
+            "url": url,
+            "title": title,
+            "summary": summary,
+            "save_path": save_path,
+            "chars": len(md),
+        }
+
+    def _restore_from_cache(self, url: str, entry) -> None:
+        """Re-register a cached Markdown page without re-fetching.
+
+        Reads the ``.md`` file written on a previous run so the merged
+        corpus outputs stay complete on resume/update runs.
+        """
+        md_path = Path(self.config.output_dir) / entry.save_path
+        try:
+            md = md_path.read_text(encoding="utf-8")
+        except OSError:
+            return
+        if not md.strip():
+            return
+        self._md_pages.append(self._md_page_meta(url, md, entry.save_path))
+        self._md_chars += len(md)
+
+    def _generate_markdown_outputs(self, output: Path) -> dict:
+        """Write ``llms.txt``, ``llms-full.txt`` and ``index.md``.
+
+        Returns a dict of ``{"llms": path, "llms_full": path, "index": path}``
+        for whichever files were written (empty dict when disabled or when no
+        pages were converted).
+        """
+        if not self.config.markdown_merge or not self._md_pages:
+            return {}
+
+        from ..markdown import strip_frontmatter
+
+        pages = sorted(self._md_pages, key=lambda p: p["url"])
+        site_host = urlparse(self.config.url).hostname or self.config.url
+        cfg = self.config
+        files: dict[str, str] = {}
+
+        # --- llms.txt: site map with per-page summaries ---
+        lines = [
+            f"# {site_host}",
+            "",
+            f"> Markdown corpus of {cfg.url} — generated by IntelliScrape",
+            "",
+            "# Main",
+            "",
+        ]
+        for p in pages:
+            summary = (p.get("summary") or "").strip()
+            suffix = f": {summary}" if summary else ""
+            lines.append(f"- [{p.get('title') or p['url']}]({p['url']}){suffix}")
+        llms = output / "llms.txt"
+        llms.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        files["llms"] = str(llms)
+
+        # --- llms-full.txt: every page merged into a single corpus ---
+        merged: list[str] = []
+        for p in pages:
+            body = ""
+            try:
+                body = (output / p["save_path"]).read_text(encoding="utf-8")
+            except OSError:
+                pass
+            body = strip_frontmatter(body).strip()
+            header = [f"# {p.get('title') or p['url']}", "", f"> Source: {p['url']}"]
+            if p.get("summary"):
+                header.append(f"> {p['summary']}")
+            merged.append("\n".join(header) + "\n\n" + body)
+        llms_full = output / "llms-full.txt"
+        llms_full.write_text("\n\n---\n\n".join(merged) + "\n", encoding="utf-8")
+        files["llms_full"] = str(llms_full)
+
+        # --- index.md: table of contents with local links ---
+        idx = [
+            f"# {site_host} — Index",
+            "",
+            f"> Source: {cfg.url} — generated by IntelliScrape",
+            "",
+            "## Pages",
+            "",
+        ]
+        for p in pages:
+            idx.append(f"- [{p.get('title') or p['url']}]({p['save_path']})")
+        index = output / "index.md"
+        index.write_text("\n".join(idx) + "\n", encoding="utf-8")
+        files["index"] = str(index)
+
+        return files
 
     # ------------------------------------------------------------------
     # Sitemap parsing
@@ -424,7 +616,9 @@ class SiteMirror:
 
     async def _fetch_robots(self, host: str) -> None:
         assert self._robots is not None
-        robots_url = f"https://{host}/robots.txt"
+        parts = urlparse(self.config.url)
+        scheme = parts.scheme or "https"
+        robots_url = f"{scheme}://{parts.netloc or host}/robots.txt"
         try:
             result = await self._download(robots_url)
             if result and result.status_code == 200:

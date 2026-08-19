@@ -194,7 +194,7 @@ class RobotsParser:
                     currentAllow.clear()
                     currentDelay = None
                     currentSitemaps.clear()
-                currentAgents = [value]
+                current_agents = [value]
 
             elif key == "disallow":
                 if value:

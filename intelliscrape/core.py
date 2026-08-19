@@ -69,8 +69,8 @@ _PERIMETERX_WEAK = [
 _AKAMAI_STRONG = ["_abck", "ak_bmsc"]
 _AKAMAI_WEAK = ["access denied", "request denied", "akamai"]
 
-_DATADOME_STRONG = ["datadome"]
-_DATADOME_WEAK = ["blocked by", "access denied by"]
+_DATADOME_STRONG = ["datadome-captcha", "dd.datadome.co", "captcha.datadome.net"]
+_DATADOME_WEAK = ["datadome"]
 
 
 def _is_cloudflare_blocked(html: str) -> bool:
@@ -948,6 +948,69 @@ class IntelliScrape:
             max_concurrent=max_concurrent,
         )
 
+    def analyze_seo(
+        self,
+        url: str,
+        *,
+        force_browser: bool = False,
+        engine: Optional[str] = None,
+    ) -> "SEOReport":
+        """Run a full SEO audit on a page.
+
+        Parameters
+        ----------
+        url : str
+            Target URL.
+        force_browser : bool
+            Force browser engine for JS-heavy sites.
+        engine : str, optional
+            Force a specific engine.
+
+        Returns
+        -------
+        SEOReport
+            SEO score, issues, and suggestions.
+        """
+        from .seo import SEOAnalyzer
+        result = self._fetch(url, engine=engine, force_browser=force_browser)
+        if not result.success:
+            raise IntelliScrapeError(f"Failed to fetch {url}: {result.error}")
+        return SEOAnalyzer.analyze_html(result.html, url)
+
+    def find_backlinks(
+        self,
+        target: str,
+        *,
+        limit: int = 50,
+        sources: Optional[List[str]] = None,
+        scrape_backlinks: bool = True,
+    ) -> "BacklinkReport":
+        """Discover backlinks to a target URL/domain via search engines.
+
+        Parameters
+        ----------
+        target : str
+            Target URL or domain to find backlinks for.
+        limit : int
+            Maximum number of backlinks to find.
+        sources : list, optional
+            Search engines to use. Default: ["google", "bing"].
+        scrape_backlinks : bool
+            Visit each referring page to extract link details.
+
+        Returns
+        -------
+        BacklinkReport
+            Backlink discovery report.
+        """
+        from .seo import BacklinkAnalyzer
+        return BacklinkAnalyzer.find(
+            target,
+            limit=limit,
+            sources=sources,
+            scrape_backlinks=scrape_backlinks,
+        )
+
     def _wait_for_manual_captcha(self, url: str, captcha_info: CaptchaInfo) -> ScrapeResult:
         """Open a visible browser and wait for the user to solve a CAPTCHA.
 
@@ -1090,3 +1153,28 @@ def scrape(url: str, **kwargs) -> str:
     """
     scraper = IntelliScrape()
     return scraper.scrape(url, **kwargs)
+
+
+def analyze_seo(url: str, **kwargs) -> "SEOReport":
+    """Quick SEO analysis function.
+
+    Examples
+    --------
+    >>> from intelliscrape import analyze_seo
+    >>> report = analyze_seo("https://example.com")
+    >>> print(f"Score: {report.overall_score}")
+    """
+    scraper = IntelliScrape()
+    return scraper.analyze_seo(url, **kwargs)
+
+
+def find_backlinks(target: str, **kwargs) -> "BacklinkReport":
+    """Quick backlink discovery function.
+
+    Examples
+    --------
+    >>> from intelliscrape import find_backlinks
+    >>> report = find_backlinks("https://example.com")
+    >>> print(f"Found: {report.total_found} backlinks")
+    """
+    return BacklinkAnalyzer.find(target, **kwargs)

@@ -3,6 +3,7 @@ beautifulsoup4>=4.12.0
 lxml
 curl_cffi>=0.7.0
 playwright>=1.40.0
+markdownify>=1.0.0
 rich
 fastapi[standard]>=0.100.0
 uvicorn>=0.23.0

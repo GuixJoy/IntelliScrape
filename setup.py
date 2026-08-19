@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="intelliscrape",
-    version="3.1.1",
+    version="3.1.2",
     description="Advanced web scraping library with anti-detection, TLS impersonation, and stealth browsing. Scrapes 98% of websites.",
     long_description=open("README.md", encoding="utf-8").read(),
     long_description_content_type="text/markdown",
@@ -16,11 +16,13 @@ setup(
         "lxml",
         "curl_cffi>=0.7.0",
         "playwright>=1.40.0",
+        "markdownify>=1.0.0",
         "rich",
         "fastapi[standard]>=0.100.0",
         "uvicorn>=0.23.0",
         "pydantic>=2.0.0",
         "defusedxml",
+        "psycopg[binary]>=3.2.0",
     ],
     extras_require={
         "stealth": ["nodriver>=0.30"],

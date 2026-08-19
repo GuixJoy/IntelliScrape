@@ -324,8 +324,8 @@ class ManualCaptchaSolver:
             return "akamai"
 
         # DataDome
-        dd_strong = ["datadome"]
-        dd_weak = ["blocked by", "access denied by"]
+        dd_strong = ["datadome-captcha", "dd.datadome.co", "captcha.datadome.net"]
+        dd_weak = ["datadome", "blocked by", "access denied by"]
         if sum(1 for m in dd_strong if m in lower) >= 1:
             return "datadome"
         if sum(1 for m in dd_weak if m in lower) >= 3 and html_len < 50000:

@@ -136,6 +136,10 @@ Examples:
   # Crawl entire site
   intelliscrape https://docs.python.org --crawl --max-pages 50
   
+  # Convert entire site to Markdown for LLM ingestion
+  intelliscrape https://docs.python.org --markdown --md-depth 3
+  intelliscrape https://docs.python.org --markdown --md-output ./corpus --md-images
+  
   # With residential proxy (for better quality)
   intelliscrape https://amazon.com --brightdata-key YOUR_KEY
   
@@ -226,6 +230,20 @@ Examples:
     parser.add_argument("--detect-api", action="store_true",
                        help="Detect API endpoints, third-party services, and exposed keys")
 
+    # SEO analysis
+    parser.add_argument("--seo", action="store_true",
+                       help="Run full SEO audit (on-page, technical, content, schema)")
+
+    # Backlink discovery
+    parser.add_argument("--backlinks", action="store_true",
+                       help="Discover backlinks via search engine queries")
+    parser.add_argument("--backlink-limit", type=int, default=50,
+                       help="Max backlinks to find (default: 50)")
+    parser.add_argument("--backlink-sources", type=str, default="google,bing",
+                       help="Search engines to use (default: google,bing)")
+    parser.add_argument("--no-scrape-backlinks", action="store_true",
+                       help="Skip scraping referring pages (just return search results)")
+
     # Downloads
     parser.add_argument("--download", action="store_true", help="Download linked files")
     parser.add_argument("--download-images", action="store_true", help="Download all images")
@@ -257,6 +275,26 @@ Examples:
                        help="Also create a WARC archive at this path")
     parser.add_argument("--no-robots", action="store_true",
                        help="Ignore robots.txt")
+
+    # Markdown (LLM ingestion corpus)
+    parser.add_argument("--markdown", action="store_true",
+                       help="Convert entire website to Markdown for LLM ingestion (RAG, fine-tuning)")
+    parser.add_argument("--md-depth", type=int, default=5,
+                       help="Max recursion depth for Markdown conversion (default: 5)")
+    parser.add_argument("--md-output", default="./markdown",
+                       help="Output directory for Markdown corpus (default: ./markdown)")
+    parser.add_argument("--md-merge", dest="md_merge", action="store_true", default=True,
+                       help="Generate llms.txt, llms-full.txt and index.md (default: on)")
+    parser.add_argument("--no-md-merge", dest="md_merge", action="store_false",
+                       help="Skip llms.txt/llms-full.txt/index.md generation")
+    parser.add_argument("--md-frontmatter", dest="md_frontmatter", action="store_true", default=True,
+                       help="Add YAML frontmatter (title, url, date, word count) to each page (default: on)")
+    parser.add_argument("--no-md-frontmatter", dest="md_frontmatter", action="store_false",
+                       help="Skip YAML frontmatter")
+    parser.add_argument("--md-images", action="store_true",
+                       help="Keep image references in Markdown")
+    parser.add_argument("--md-keep-nav", action="store_true",
+                       help="Keep navigation/footer/aside content in Markdown")
 
     # Force browser
     parser.add_argument("--engine", choices=["static", "playwright_stealth", "camoufox", "nodriver", "drissionpage"],
@@ -295,12 +333,18 @@ Examples:
             return _tech_report(args)
         elif args.detect_api:
             return _detect_api_report(args)
+        elif args.seo:
+            return _seo_report(args)
+        elif args.backlinks:
+            return _backlinks_report(args)
         elif args.crawl:
             return _crawl(args)
         elif args.paginate:
             return _paginate(args)
         elif args.search:
             return _search(args)
+        elif args.markdown:
+            return _markdown(args)
         elif args.mirror:
             return _mirror(args)
         elif args.download or args.download_images:
@@ -688,6 +732,72 @@ def _mirror(args) -> int:
             border_style="yellow",
         ))
 
+    if result.zip_path:
+        console.print(f"[green]ZIP created: {result.zip_path}[/green]")
+    if result.warc_path:
+        console.print(f"[green]WARC created: {result.warc_path}[/green]")
+
+    return 0
+
+
+def _markdown(args) -> int:
+    """Convert an entire website to Markdown for LLM ingestion."""
+    from .markdown import markdown_site
+
+    url = args.url.rstrip("/")
+    console.print(f"[bold cyan]Converting to Markdown:[/bold cyan] {url}")
+    console.print(f"[dim]Output: {args.md_output}[/dim]")
+    console.print(f"[dim]Depth: {args.md_depth}, Delay: {args.mirror_delay}s[/dim]")
+
+    extra = {
+        "delay": args.mirror_delay,
+        "respect_robots": not args.no_robots,
+        "engine": args.mirror_engine,
+        "markdown_merge": args.md_merge,
+        "markdown_frontmatter": args.md_frontmatter,
+        "markdown_keep_nav": args.md_keep_nav,
+        "markdown_images": args.md_images,
+    }
+    if args.mirror_exclude:
+        extra["exclude_patterns"] = args.mirror_exclude
+    if args.mirror_include:
+        extra["include_patterns"] = args.mirror_include
+    if args.mirror_proxy:
+        extra["proxy"] = args.mirror_proxy
+
+    result = markdown_site(
+        url, output_dir=args.md_output, max_depth=args.md_depth,
+        save_zip=args.mirror_zip, save_warc=args.mirror_warc, **extra,
+    )
+
+    console.print()
+    elapsed = result.elapsed_seconds
+
+    if result.errors == 0:
+        console.print(Panel(
+            f"[green]Markdown conversion complete![/green]\n"
+            f"Pages: {result.pages_converted} | Chars: {result.total_chars:,}\n"
+            f"Errors: {result.errors} | Time: {elapsed:.1f}s\n"
+            f"Output: {result.output_dir}",
+            title="Markdown Result",
+            border_style="green",
+        ))
+    else:
+        console.print(Panel(
+            f"[yellow]Markdown conversion completed with errors[/yellow]\n"
+            f"Pages: {result.pages_converted} | Chars: {result.total_chars:,}\n"
+            f"Errors: {result.errors} | Time: {elapsed:.1f}s\n"
+            f"Output: {result.output_dir}",
+            title="Markdown Result",
+            border_style="yellow",
+        ))
+
+    if result.llms_file:
+        console.print(f"[green]Site map: {result.llms_file}[/green]")
+    if result.llms_full_file:
+        console.print(f"[green]Merged corpus: {result.llms_full_file}[/green]")
+    if result.index_file:
+        console.print(f"[green]Index: {result.index_file}[/green]")
     if result.zip_path:
         console.print(f"[green]ZIP created: {result.zip_path}[/green]")
     if result.warc_path:
@@ -1096,6 +1206,360 @@ def _detect_api_report(args) -> int:
         with open(args.output, "w", encoding="utf-8") as f:
             _json.dump(report.to_dict(), f, indent=2, ensure_ascii=False)
         console.print(f"[green]Saved API report to {args.output}[/green]")
+
+    return 0
+
+
+def _seo_report(args) -> int:
+    """Run full SEO audit and display results."""
+    from .seo import SEOAnalyzer
+
+    scraper = _create_scraper(args)
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task(f"Auditing SEO for {args.url}...", total=None)
+
+        html = scraper.scrape(args.url, return_raw=True, force_browser=args.force_browser)
+        report = SEOAnalyzer.analyze_html(html, args.url)
+
+        progress.update(task, completed=True)
+
+    # --- Score panel ---
+    score_color = "green" if report.overall_score >= 70 else "yellow" if report.overall_score >= 50 else "red"
+    console.print()
+    console.print(Panel(
+        f"[bold]URL:[/bold] {report.url}\n"
+        f"[bold]SEO Score:[/bold] [{score_color}]{report.overall_score}/100[/{score_color}]\n"
+        f"[bold]Title:[/bold] {report.title[:80]}{'...' if len(report.title) > 80 else ''}\n"
+        f"[bold]Meta Description:[/bold] {report.meta_description[:100]}{'...' if len(report.meta_description) > 100 else ''}\n"
+        f"[bold]Reading Time:[/bold] {report.content.reading_time_minutes:.1f} min\n"
+        f"[bold]Word Count:[/bold] {report.content.word_count:,}\n"
+        f"[bold]Canonical:[/bold] {report.canonical or 'None'}",
+        title="SEO Report",
+        border_style="blue",
+    ))
+
+    # --- Score breakdown by check ---
+    check_table = Table(title="Score Breakdown", show_header=True)
+    check_table.add_column("Check", style="cyan")
+    check_table.add_column("Score", justify="right")
+    check_table.add_column("Status", justify="center")
+
+    for check in report.checks:
+        check_color = "green" if check.score >= 0.7 else "yellow" if check.score >= 0.4 else "red"
+        status = "[green]PASS[/green]" if check.passed else "[red]FAIL[/red]"
+        check_table.add_row(
+            check.name.replace("_", " ").title(),
+            f"[{check_color}]{check.score*100:.0f}%[/{check_color}]",
+            status,
+        )
+
+    console.print(check_table)
+
+    # --- Content Analysis ---
+    ca = report.content
+    content_table = Table(title="Content Analysis", show_header=True)
+    content_table.add_column("Metric", style="cyan")
+    content_table.add_column("Value", justify="right", style="green")
+
+    content_table.add_row("Word Count", f"{ca.word_count:,}")
+    content_table.add_row("Sentences", f"{ca.sentence_count:,}")
+    content_table.add_row("Paragraphs", f"{ca.paragraph_count:,}")
+    content_table.add_row("Avg Sentence Length", f"{ca.avg_sentence_length:.1f} words")
+    content_table.add_row("Reading Time", f"{ca.reading_time_minutes:.1f} min")
+    content_table.add_row("Readability (F-K Grade)", f"{ca.flesch_kincaid_grade:.1f}")
+
+    console.print(content_table)
+
+    # --- Top Keywords ---
+    if ca.top_keywords:
+        kw_table = Table(title="Top Keywords", show_header=True)
+        kw_table.add_column("Keyword", style="cyan")
+        kw_table.add_column("Count", justify="right", style="green")
+        kw_table.add_column("Density", justify="right", style="yellow")
+
+        for word, count, density in ca.top_keywords[:10]:
+            kw_table.add_row(word, str(count), f"{density:.2f}%")
+
+        console.print(kw_table)
+
+    # --- Link Analysis ---
+    la = report.links
+    link_table = Table(title="Link Analysis", show_header=True)
+    link_table.add_column("Metric", style="cyan")
+    link_table.add_column("Value", justify="right", style="green")
+
+    link_table.add_row("Total Links", f"{la.total:,}")
+    link_table.add_row("[green]Internal[/green]", f"{la.internal:,}")
+    link_table.add_row("[yellow]External[/yellow]", f"{la.external:,}")
+    link_table.add_row("Dofollow", f"{la.dofollow:,}")
+    link_table.add_row("Nofollow", f"{la.nofollow:,}")
+    if la.sponsored:
+        link_table.add_row("Sponsored", f"{la.sponsored:,}")
+    if la.ugc:
+        link_table.add_row("UGC", f"{la.ugc:,}")
+    link_table.add_row("Empty Anchors", f"[red]{la.empty_anchors}[/red]" if la.empty_anchors else "0")
+
+    console.print(link_table)
+
+    if la.external_domains:
+        console.print(f"  [dim]External domains: {', '.join(la.external_domains[:8])}[/dim]")
+
+    # --- Heading Hierarchy ---
+    ha = report.headings
+    if ha.counts:
+        heading_summary = "  ".join(
+            f"[bold]{tag.upper()}[/bold]: {count}" for tag, count in sorted(ha.counts.items())
+        )
+        console.print()
+        console.print(f"[bold]Heading Structure:[/bold] {heading_summary}")
+
+        if ha.hierarchy:
+            console.print()
+            console.print("[bold]Heading Hierarchy:[/bold]")
+            for level, text in ha.hierarchy[:20]:
+                indent = "  " * (level - 1)
+                tag_color = "red" if level == 1 else "yellow" if level == 2 else "green"
+                console.print(f"  {indent}[{tag_color}]h{level}[/{tag_color}] {text[:70]}{'...' if len(text) > 70 else ''}")
+            if len(ha.hierarchy) > 20:
+                console.print(f"  [dim]... and {len(ha.hierarchy) - 20} more headings[/dim]")
+
+    # --- Image Audit ---
+    ia = report.images
+    if ia.total > 0:
+        img_table = Table(title="Image Audit", show_header=True)
+        img_table.add_column("Metric", style="cyan")
+        img_table.add_column("Value", justify="right", style="green")
+
+        img_table.add_row("Total Images", f"{ia.total:,}")
+        alt_pct = ia.alt_coverage * 100
+        alt_color = "green" if alt_pct >= 80 else "yellow" if alt_pct >= 50 else "red"
+        img_table.add_row(f"Alt Text Coverage", f"[{alt_color}]{alt_pct:.0f}%[/{alt_color}] ({ia.with_alt}/{ia.total})")
+        img_table.add_row("Missing Alt", f"[red]{ia.missing_alt}[/red]" if ia.missing_alt else "0")
+        img_table.add_row("Empty Alt", f"{ia.empty_alt}")
+        img_table.add_row("Lazy Loaded", f"{ia.lazy_loaded}")
+
+        console.print(img_table)
+
+        if ia.external_domains:
+            console.print(f"  [dim]Image domains: {', '.join(ia.external_domains[:5])}[/dim]")
+
+    # --- Technical SEO ---
+    ta = report.technical
+    tech_table = Table(title="Technical SEO", show_header=True)
+    tech_table.add_column("Check", style="cyan")
+    tech_table.add_column("Status", justify="center")
+
+    # Viewport
+    vp_status = "[green]PASS[/green]" if ta.has_viewport else "[red]MISSING[/red]"
+    tech_table.add_row("Viewport Meta", vp_status)
+
+    # HTTPS
+    https_status = "[green]Yes[/green]" if ta.is_https else "[red]No[/red]"
+    tech_table.add_row("HTTPS", https_status)
+
+    # Language
+    lang_status = f"[green]{ta.lang_attribute}[/green]" if ta.has_lang else "[red]MISSING[/red]"
+    tech_table.add_row("Language", lang_status)
+
+    # Canonical
+    can_status = "[green]Present[/green]" if ta.has_canonical else "[yellow]Missing[/yellow]"
+    tech_table.add_row("Canonical", can_status)
+
+    # Robots
+    if ta.robots_meta:
+        robots_display = ta.robots_meta[:40]
+        if ta.is_noindex:
+            robots_display = f"[red]{robots_display}[/red]"
+        tech_table.add_row("Robots Meta", robots_display)
+    else:
+        tech_table.add_row("Robots Meta", "[dim]None[/dim]")
+
+    # Hreflang
+    if ta.hreflang_tags:
+        tech_table.add_row("Hreflang", f"{len(ta.hreflang_tags)} tags ({'x-default present' if ta.has_x_default else '[red]no x-default[/red]'})")
+
+    console.print(tech_table)
+
+    # --- Performance ---
+    pa = report.performance
+    perf_table = Table(title="Page Performance", show_header=True)
+    perf_table.add_column("Metric", style="cyan")
+    perf_table.add_column("Value", justify="right", style="green")
+
+    perf_table.add_row("DOM Elements", f"{pa.total_dom_elements:,}")
+    perf_table.add_row("Scripts", f"{pa.script_count} ({pa.external_scripts} external, {pa.inline_scripts} inline)")
+    perf_table.add_row("Stylesheets", f"{pa.stylesheet_count} ({pa.external_stylesheets} external)")
+    if pa.inline_css_size > 0:
+        perf_table.add_row("Inline CSS", f"{pa.inline_css_size:,} bytes")
+
+    console.print(perf_table)
+
+    if pa.external_domains:
+        console.print(f"  [dim]External domains loaded: {', '.join(pa.external_domains[:8])}[/dim]")
+
+    # --- Schema types ---
+    if report.schema_types:
+        console.print()
+        console.print(f"[bold]Schema Types:[/bold] {', '.join(report.schema_types)}")
+
+    # --- OG Tags ---
+    if report.og_tags:
+        og_table = Table(title="Open Graph", show_header=True)
+        og_table.add_column("Tag", style="cyan")
+        og_table.add_column("Value", style="green", max_width=60)
+        for k, v in report.og_tags.items():
+            og_table.add_row(k, v[:60] + ("..." if len(v) > 60 else ""))
+        console.print(og_table)
+
+    # --- Issues ---
+    # --- Critical issues ---
+    if report.critical_issues:
+        console.print()
+        console.print("[bold red]Critical Issues:[/bold red]")
+        for issue in report.critical_issues:
+            console.print(f"  [red]![/red] {issue.message}")
+            if issue.suggestion:
+                console.print(f"    [dim]→ {issue.suggestion}[/dim]")
+
+    # --- Warnings ---
+    if report.warnings:
+        console.print()
+        console.print("[bold yellow]Warnings:[/bold yellow]")
+        for issue in report.warnings:
+            console.print(f"  [yellow]![/yellow] {issue.message}")
+            if issue.suggestion:
+                console.print(f"    [dim]→ {issue.suggestion}[/dim]")
+
+    # --- Info ---
+    if report.info_issues:
+        console.print()
+        console.print("[bold]Suggestions:[/bold]")
+        for issue in report.info_issues:
+            console.print(f"  [dim]• {issue.message}[/dim]")
+            if issue.suggestion:
+                console.print(f"    [dim]→ {issue.suggestion}[/dim]")
+
+    if not report.issues:
+        console.print()
+        console.print("[green]No SEO issues found![/green]")
+
+    # --- Export ---
+    if args.export:
+        return _export_content(report.to_dict(), args.export, args.output, args.url)
+
+    if args.output:
+        import json as _json
+        with open(args.output, "w", encoding="utf-8") as f:
+            _json.dump(report.to_dict(), f, indent=2, ensure_ascii=False)
+        console.print(f"[green]Saved SEO report to {args.output}[/green]")
+
+    return 0
+
+
+def _backlinks_report(args) -> int:
+    """Discover backlinks via search engine queries."""
+    from .seo import BacklinkAnalyzer
+
+    sources = [s.strip() for s in args.backlink_sources.split(",")]
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task(f"Finding backlinks for {args.url}...", total=None)
+
+        def on_progress(msg):
+            progress.update(task, description=msg)
+
+        report = BacklinkAnalyzer.find(
+            args.url,
+            limit=args.backlink_limit,
+            sources=sources,
+            scrape_backlinks=not args.no_scrape_backlinks,
+            on_progress=on_progress,
+        )
+
+        progress.update(task, completed=True)
+
+    # --- Summary panel ---
+    console.print()
+    console.print(Panel(
+        f"[bold]Target:[/bold] {report.target}\n"
+        f"[bold]Backlinks found:[/bold] {len(report.backlinks)} "
+        f"([green]{report.verified_count} verified[/green] / "
+        f"[yellow]{report.unverified_count} unverified[/yellow])\n"
+        f"[bold]Unique domains:[/bold] {report.unique_domains}\n"
+        f"[bold]Dofollow:[/bold] {report.dofollow_count}  "
+        f"[bold]Nofollow:[/bold] {report.nofollow_count}\n"
+        f"[bold]Search engines:[/bold] {', '.join(report.search_engines_used)}",
+        title="Backlink Report",
+        border_style="blue",
+    ))
+
+    # --- Backlinks table ---
+    if report.backlinks:
+        bl_table = Table(title="Backlinks", show_header=True)
+        bl_table.add_column("Source URL", style="cyan", max_width=55)
+        bl_table.add_column("Anchor Text", style="green", max_width=30)
+        bl_table.add_column("Rel", style="yellow")
+        bl_table.add_column("Engine", style="dim")
+        bl_table.add_column("Status", style="dim")
+
+        for bl in report.backlinks[:50]:  # Show top 50
+            rel_display = bl.rel_type if bl.rel_type != "follow" else "[green]follow[/green]"
+            status_display = "[green]verified[/green]" if bl.verified else "[yellow]unverified[/yellow]"
+            bl_table.add_row(
+                bl.source_url[:55],
+                bl.anchor_text[:30] or "[dim]—[/dim]",
+                rel_display,
+                bl.search_engine,
+                status_display,
+            )
+
+        console.print(bl_table)
+
+        if len(report.backlinks) > 50:
+            console.print(f"  [dim]... and {len(report.backlinks) - 50} more backlinks[/dim]")
+        if report.unverified_count:
+            console.print(
+                "[dim]Unverified results are pages the search engines returned but where "
+                "no direct link to the target could be confirmed.[/dim]"
+            )
+    else:
+        console.print("[yellow]No backlinks found.[/yellow]")
+
+    # --- Anchor text distribution ---
+    anchor_dist = report.anchor_text_distribution
+    if anchor_dist:
+        console.print()
+        console.print("[bold]Top Anchor Texts:[/bold]")
+        for text, count in list(anchor_dist.items())[:10]:
+            console.print(f"  {count}x  {text[:50]}{'...' if len(text) > 50 else ''}")
+
+    # --- Errors ---
+    if report.errors:
+        console.print()
+        console.print("[yellow]Search errors:[/yellow]")
+        for err in report.errors:
+            console.print(f"  [dim]• {err}[/dim]")
+
+    # --- Export ---
+    if args.export:
+        return _export_content(report.to_dict(), args.export, args.output, args.url)
+
+    if args.output:
+        import json as _json
+        with open(args.output, "w", encoding="utf-8") as f:
+            _json.dump(report.to_dict(), f, indent=2, ensure_ascii=False)
+        console.print(f"[green]Saved backlink report to {args.output}[/green]")
 
     return 0
 

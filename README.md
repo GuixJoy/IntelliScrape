@@ -38,6 +38,11 @@ No more switching between `requests`, `playwright`, and `selenium`. No more debu
 - Async support for concurrent scraping
 - Link checking (status verification, categorization, broken link detection)
 - **Website mirroring** (HTTrack-ported, WARC/ZIP export, offline browsing)
+- **Markdown corpus** (whole-site Markdown for LLM/RAG ingestion, `llms.txt` / `llms-full.txt` / `index.md`)
+- **SEO auditing** (0–100 score, 11 weighted checks, keyword density, readability, heading hierarchy, image alt, technical, performance)
+- **Backlink discovery** (Google/Bing `link:` queries, anchor-text and rel analysis)
+- **Website intelligence** (detect frameworks, CMS, analytics, CDN, hosting, and more)
+- **API detection** (REST/GraphQL/WebSocket endpoints, third-party services, exposed keys)
 
 ---
 
@@ -213,6 +218,33 @@ intelliscrape [URL] [OPTIONS]
 |---|---|
 | `--check-links` | Check all links on the page and report status |
 
+### SEO Audit
+
+| Flag | Description |
+|---|---|
+| `--seo` | Run a full SEO audit: score /100, 11 weighted checks (title, meta, headings, images, links, canonical, OG, Twitter Cards, schema, technical, content), keyword density, readability (Flesch-Kincaid), heading hierarchy, image alt coverage, technical checks, page performance, and prioritized fixes |
+
+### Backlink Discovery
+
+| Flag | Description |
+|---|---|
+| `--backlinks` | Discover backlinks via Google/Bing `link:` queries |
+| `--backlink-limit N` | Max backlinks to find (default: 50) |
+| `--backlink-sources ENG` | Search engines: `google,bing` (default) |
+| `--no-scrape-backlinks` | Return search-result URLs without visiting pages |
+
+### Website Intelligence
+
+| Flag | Description |
+|---|---|
+| `--tech` | Detect technology stack: frameworks, CSS frameworks, JS libraries, analytics, CDN, hosting, CMS, payment, languages, email marketing |
+
+### API Detection
+
+| Flag | Description |
+|---|---|
+| `--detect-api` | Detect REST/GraphQL/WebSocket endpoints, API documentation paths, third-party services, and exposed API keys |
+
 ### Downloads
 
 | Flag | Description |
@@ -237,6 +269,20 @@ intelliscrape [URL] [OPTIONS]
 | `--mirror-proxy URL` | Proxy for mirroring |
 | `--mirror-update` | Resume/update existing mirror |
 | `--no-robots` | Ignore robots.txt |
+
+### Markdown (LLM ingestion)
+
+| Flag | Description |
+|---|---|
+| `--markdown` | Convert entire website to Markdown corpus (per-page `.md` + `llms.txt` + `llms-full.txt` + `index.md`) |
+| `--md-depth N` | Max recursion depth (default: 5) |
+| `--md-output DIR` | Output directory (default: ./markdown) |
+| `--md-merge` / `--no-md-merge` | Write merged `llms.txt` / `llms-full.txt` / `index.md` (default: on) |
+| `--md-frontmatter` / `--no-md-frontmatter` | Add YAML frontmatter to each page (default: on) |
+| `--md-images` | Keep image references as Markdown images |
+| `--md-keep-nav` | Keep `<nav>` / `<footer>` content |
+
+Reuses `--mirror-delay`, `--mirror-exclude`, `--mirror-include`, `--mirror-engine`, `--mirror-proxy`, `--mirror-zip`, `--mirror-warc`, `--no-robots`, `--max-pages`.
 
 ### Export
 
@@ -304,6 +350,33 @@ intelliscrape --web-search "site:github.com python scraper" --search-limit 20 --
 # Web search + scrape each result page
 intelliscrape --web-search "best python libraries" --fetch-content
 intelliscrape --web-search "fastapi tutorial" --fetch-content --export json -o results.json
+
+# Markdown corpus for LLM ingestion
+intelliscrape https://docs.example.com --markdown
+
+# Shallow, no merged files
+intelliscrape https://docs.example.com --markdown --md-depth 2 --no-md-merge --md-output ./docs-md
+
+# Keep images and nav, add robots.txt exception
+intelliscrape https://docs.example.com --markdown --md-images --md-keep-nav --no-robots
+
+# SEO audit
+intelliscrape https://example.com --seo
+
+# SEO audit exported to JSON
+intelliscrape https://example.com --seo --export json -o seo.json
+
+# Discover backlinks
+intelliscrape https://example.com --backlinks --backlink-limit 50
+
+# Backlinks without visiting pages (search results only)
+intelliscrape https://example.com --backlinks --no-scrape-backlinks
+
+# Technology stack detection
+intelliscrape https://example.com --tech
+
+# API endpoint detection
+intelliscrape https://example.com --detect-api
 ```
 
 ---
@@ -817,6 +890,75 @@ intelliscrape https://example.com --mirror --mirror-update
 
 ---
 
+### `markdown_site()` — Markdown Corpus for LLMs
+
+Convert an entire website to a Markdown corpus optimized for LLM / RAG ingestion (like an offline `llms.txt` export). Each page becomes a clean `.md` file with YAML frontmatter; the crawler skips CSS/JS/images, strips nav/footer/scripts, absolutizes links, and appends JSON-LD structured data.
+
+```python
+from intelliscrape import markdown_site
+
+result = markdown_site(
+    url="https://docs.example.com",
+    output_dir="./markdown",
+    max_depth=5,
+    save_zip="corpus.zip",
+)
+print(result.pages_converted)   # 42
+print(result.total_chars)       # 1_234_567
+print(result.llms_file)         # ./markdown/llms.txt
+print(result.llms_full_file)    # ./markdown/llms-full.txt
+```
+
+Output layout:
+
+```
+markdown/
+├── llms.txt                 # site map: per-page title, URL, summary
+├── llms-full.txt            # every page merged into one corpus file
+├── index.md                 # TOC linking to local .md files
+└── docs.example.com/        # one .md per page, mirroring the URL tree
+    ├── index.md
+    ├── getting-started.md
+    └── guides/
+        └── proxy-setup.md
+```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `url` | str | required | Starting URL |
+| `output_dir` | str | `./markdown` | Output directory |
+| `max_depth` | int | 5 | Max link-following depth |
+| `save_zip` / `save_warc` | str | None | Also create ZIP / WARC archive |
+| `progress_callback` | callable | None | Called with crawl progress |
+| `markdown_merge` | bool | True | Write `llms.txt` / `llms-full.txt` / `index.md` |
+| `markdown_frontmatter` | bool | True | Add YAML frontmatter (title, url, date, word_count, ...) |
+| `markdown_keep_nav` | bool | False | Keep `<nav>` / `<footer>` content |
+| `markdown_images` | bool | False | Keep image references as Markdown images |
+| `markdown_json_ld` | bool | True | Append JSON-LD as Structured Data section |
+| `respect_robots` | bool | True | Respect robots.txt |
+| `exclude_patterns` / `include_patterns` | list | [] | URL filters |
+| `engine` | str | `static` | Scraping engine |
+| `proxy` | str | None | Proxy URL |
+| `delay` | float | 0.5 | Delay between requests |
+
+Returns `MarkdownResult`:
+- `result.pages_converted` — Number of pages converted to Markdown
+- `result.total_chars` — Total characters written
+- `result.errors` — Number of failed pages
+- `result.llms_file` / `result.llms_full_file` / `result.index_file` — Paths to merged files (None when `markdown_merge=False` or no pages)
+- `result.zip_path` / `result.warc_path` — Archive paths (if created)
+
+#### Single-page converter
+
+```python
+from intelliscrape import html_to_markdown
+
+md = html_to_markdown(html, url="https://example.com/page",
+                      frontmatter=True, keep_nav=False)
+```
+
+---
+
 ### `Downloader` — File Downloads
 
 ```python
@@ -1133,6 +1275,127 @@ intelliscrape https://example.com --mirror --mirror-warc archive.warc.gz
 intelliscrape https://example.com --mirror --mirror-proxy socks5://proxy:1080
 ```
 
+### Markdown Corpus (LLM / RAG)
+
+```python
+from intelliscrape import markdown_site
+
+# Convert whole site to Markdown
+result = markdown_site("https://docs.example.com", max_depth=5)
+print(f"Converted {result.pages_converted} pages -> {result.output_dir}")
+```
+
+```bash
+# Convert site to Markdown corpus
+intelliscrape https://docs.example.com --markdown
+
+# With ZIP archive
+intelliscrape https://docs.example.com --markdown --mirror-zip corpus.zip
+```
+
+### SEO Auditing
+
+Full on-page SEO analysis with a weighted 0–100 score across 11 checks: title, meta description, headings, images, links, canonical, Open Graph, Twitter Cards, schema, technical, and content quality. Every check returns a `SEOCheck` with score and pass/fail status, plus prioritized `issues` and `suggestions` for fixing what matters first.
+
+```python
+from intelliscrape import analyze_seo, IntelliScrape
+
+# Quick one-liner
+report = analyze_seo("https://example.com")
+print(f"Score: {report.overall_score}/100")
+
+# With the scraper (reuses engine selection / proxy)
+report = IntelliScrape().analyze_seo("https://example.com")
+
+# Deep inspection
+print(f"Word count: {report.content.word_count}")
+print(f"Readability grade: {report.content.readability_grade}")
+print(f"Top keyword: {report.content.top_keywords[0]}")
+print(f"Internal links: {report.links.internal}, External: {report.links.external}")
+print(f"H1 count: {report.headings.counts.get('h1', 0)}")
+print(f"Images missing alt: {report.images.missing_alt}")
+print(f"Has viewport: {report.technical.has_viewport}")
+print(f"External scripts: {report.performance.external_scripts}")
+
+# Every check with pass/fail
+for check in report.checks:
+    print(f"{check.name}: {check.score:.0%} ({'PASS' if check.passed else 'FAIL'})")
+
+# Export everything
+report.to_dict()
+```
+
+```bash
+# CLI
+intelliscrape https://example.com --seo
+
+# Export the full audit
+intelliscrape https://example.com --seo --export json -o seo.json
+```
+
+### Backlink Discovery
+
+Find pages linking to a target domain with Google/Bing `link:` queries, visit each referring page to extract the exact link, anchor text, and `rel` attributes, and analyze the anchor-text distribution.
+
+Search engines (especially Bing's `link:` operator) can return pages that don't actually link to the target. Each result is marked **verified** (a direct link to the target was confirmed on the page) or **unverified** (search-engine hit only). `unique_domains`, `dofollow`, and `nofollow` counts reflect verified backlinks only.
+
+```python
+from intelliscrape import find_backlinks
+
+# Search + scrape referring pages
+report = find_backlinks("https://example.com", limit=50)
+
+# Search results only (no page visits)
+report = find_backlinks("https://example.com", scrape_backlinks=False)
+
+for bl in report.backlinks:
+    if bl.verified:
+        print(f"[verified] {bl.source_url} -> {bl.anchor_text or '[no anchor]'} ({bl.rel_type})")
+```
+
+```bash
+# CLI
+intelliscrape https://example.com --backlinks
+
+# Results only from search engines, skip page visits
+intelliscrape https://example.com --backlinks --no-scrape-backlinks
+
+# Limit and export
+intelliscrape https://example.com --backlinks --backlink-limit 100 --export json -o backlinks.json
+```
+
+### Website Intelligence (Tech Stack)
+
+Detect the technology stack from HTML, headers, cookies, and asset URLs with confidence-weighted signature matching.
+
+```python
+from intelliscrape import IntelliScrape
+
+stack = IntelliScrape().detect_tech("https://stripe.com")
+print(stack.summary)
+# {'frameworks': ['next.js'], 'css_frameworks': ['tailwind css'], ...}
+```
+
+```bash
+intelliscrape https://example.com --tech
+```
+
+### API Detection
+
+Detect REST, GraphQL, and WebSocket endpoints, API documentation paths, third-party services, and exposed API keys from page source.
+
+```python
+from intelliscrape import IntelliScrape
+
+report = IntelliScrape().detect_apis("https://example.com")
+for ep in report.endpoints:
+    print(f"{ep.method} {ep.url} ({ep.category}, {ep.confidence:.0%})")
+```
+
+```bash
+intelliscrape https://example.com --detect-api
+```
+
 ---
 
 ## Examples
@@ -1247,6 +1510,7 @@ report = scraper.search_web("site:github.com python scraper", limit=20)
 | Anti-bot challenge opens browser but no CAPTCHA visible | The challenge may require Press and Hold — hold the button for 3-5 seconds |
 | False positive: "CAPTCHA detected" on normal site | v3.1.1+ uses smart detection — update with `pip install -U intelliscrape` |
 | Playwright not installed | `pip install playwright && playwright install chromium` |
+| Markdown mode says markdownify missing | `pip install markdownify` |
 | Camoufox not installed | `pip install "camoufox[geoip]" && python -m camoufox fetch` |
 | nodriver not installed | `pip install nodriver` |
 | DrissionPage not installed | `pip install DrissionPage` |
@@ -1276,6 +1540,7 @@ intelliscrape/
     crawler.py              # crawl(), CrawlResult
     interceptor.py          # RequestInterceptor
     link_checker.py         # check_links, LinkCheckReport
+    markdown.py             # html_to_markdown, markdown_site (LLM corpus)
     parser.py               # HTML DOM builder
     cleaner.py              # Text cleaning
     utils.py                # HTML analysis
