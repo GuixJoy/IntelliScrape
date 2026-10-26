@@ -11,9 +11,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, HttpUrl
 from typing import Optional
+import ipaddress
+import socket
 import logging
 import json
 import os
+from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 
 try:
@@ -34,6 +37,46 @@ def _is_cloudflare_blocked(html: str) -> bool:
     """Check if response is a Cloudflare challenge page."""
     lower = html.lower()
     return any(marker in lower for marker in CLOUDFLARE_MARKERS)
+
+
+BLOCKED_NETWORKS = [
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+    ipaddress.ip_network("fe80::/10"),
+]
+
+
+def is_private_ip(hostname: str) -> bool:
+    try:
+        resolved = socket.getaddrinfo(hostname, None)
+        for _family, _, _, _, sockaddr in resolved:
+            ip = ipaddress.ip_address(sockaddr[0])
+            for net in BLOCKED_NETWORKS:
+                if ip in net:
+                    return True
+        return False
+    except (socket.gaierror, ValueError):
+        return False
+
+
+def validate_url(url_str: str) -> str:
+    """Reject non-HTTP(S) and private/internal targets (SSRF guard)."""
+    parsed = urlparse(url_str)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError("Only HTTP and HTTPS URLs are allowed")
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError("Invalid URL: no hostname")
+    if is_private_ip(hostname):
+        raise ValueError("Private/internal URLs are not allowed")
+    if hostname in {"localhost", "127.0.0.1", "0.0.0.0", "::1", "169.254.169.254"}:
+        raise ValueError("This URL is not allowed")
+    return url_str
 
 
 STEALTH_JS = """
@@ -179,7 +222,12 @@ app = FastAPI(
     version=WEB_VERSION,
 )
 
-ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "https://intelliscrape.dev,https://www.intelliscrape.dev,http://localhost:5173,http://localhost:3000").split(",")
+DEFAULT_ORIGINS = (
+    "https://intelliscrape.dev,https://www.intelliscrape.dev,"
+    "http://localhost:3000,http://localhost:4173,http://localhost:5173,http://localhost:8080,"
+    "http://127.0.0.1:3000,http://127.0.0.1:5173,http://127.0.0.1:8080"
+)
+ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", DEFAULT_ORIGINS).split(",")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -190,11 +238,22 @@ app.add_middleware(
 
 
 def _ensure_playwright_browsers():
-    """Install Playwright browsers if not already present."""
+    """Install Playwright's Chromium only when it is not already present."""
+    try:
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as p:
+            if os.path.exists(p.chromium.executable_path):
+                return
+    except Exception:
+        pass
+
     try:
         import subprocess
+        import sys
+
         result = subprocess.run(
-            ["python", "-m", "playwright", "install", "chromium"],
+            [sys.executable, "-m", "playwright", "install", "chromium"],
             capture_output=True, text=True, timeout=120,
         )
         if result.returncode == 0:
@@ -234,6 +293,14 @@ class TechResponse(BaseModel):
     tech: dict
     server_headers: dict = {}
     success: bool = True
+
+
+class DesignRequest(BaseModel):
+    url: HttpUrl
+    # Kept for compatibility with older clients: extraction always measures the
+    # rendered page. Pass profiles to request the mobile capture as well.
+    render: bool = True
+    profiles: Optional[list[str]] = None
 
 
 def scrape_basic(url: str, raw: bool = False, render_js: bool = False) -> str:
@@ -650,6 +717,7 @@ def root():
             "scrape": "POST /scrape",
             "tech": "POST /tech",
             "detect_api": "POST /detect-api",
+            "design": "POST /design",
             "health": "GET /health",
             "version": "GET /version",
         },
@@ -668,7 +736,28 @@ def version():
         playwright_ok = True
     except ImportError:
         playwright_ok = False
-    return {"version": WEB_VERSION, "engine": "standalone", "dependencies": {"curl_cffi": CURL_AVAILABLE, "psycopg": DB_AVAILABLE, "playwright": playwright_ok}}
+
+    design_mode = "static"
+    if playwright_ok:
+        try:
+            with sync_playwright() as p:
+                if os.path.exists(p.chromium.executable_path):
+                    design_mode = "live"
+        except Exception:
+            pass
+
+    return {
+        "version": WEB_VERSION,
+        "engine": "standalone",
+        "dependencies": {
+            "curl_cffi": CURL_AVAILABLE,
+            "psycopg": DB_AVAILABLE,
+            "playwright": playwright_ok,
+            # "static" means Chromium is missing on the host: /design still
+            # answers, but from HTML/CSS rather than the rendered page.
+            "design": design_mode,
+        },
+    }
 
 
 LIBRARY_INSTALL_MSG = (
@@ -691,6 +780,10 @@ LIBRARY_INSTALL_MSG_SHORT = (
 def scrape_url(req: ScrapeRequest, request: Request):
     """Scrape a website and return clean text."""
     url_str = str(req.url)
+    try:
+        validate_url(url_str)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     logger.info(f"Scrape request: {url_str}")
     try:
         content = scrape_basic(url_str, raw=req.raw, render_js=req.render)
@@ -714,6 +807,10 @@ def scrape_url(req: ScrapeRequest, request: Request):
 def detect_tech(req: TechRequest, request: Request):
     """Detect website technology stack (frameworks, CMS, analytics, CDN, etc)."""
     url_str = str(req.url)
+    try:
+        validate_url(url_str)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     logger.info(f"Tech detection request: {url_str}")
     try:
         from intelliscrape.tech import TechStackExtractor
@@ -780,6 +877,10 @@ class DetectApiResponse(BaseModel):
 def detect_api(req: DetectApiRequest, request: Request):
     """Detect API endpoints, third-party services, and exposed keys."""
     url_str = str(req.url)
+    try:
+        validate_url(url_str)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     logger.info(f"API detection request: {url_str}")
     try:
         from intelliscrape.api_detector import ApiDetector
@@ -819,6 +920,94 @@ def detect_api(req: DetectApiRequest, request: Request):
         error_msg = str(e)
         logger.error(f"API detection failed: {url_str} -> {error_msg}")
         raise HTTPException(status_code=400, detail=LIBRARY_INSTALL_MSG.format(url=url_str))
+
+
+def _fetch_design_css(html: str, base_url: str, limit: int = 8) -> list:
+    """Fetch linked stylesheets declared in *html*, SSRF-guarded, best effort."""
+    from urllib.parse import urljoin
+
+    from intelliscrape.design.static import stylesheet_hrefs
+
+    texts = []
+    if not CURL_AVAILABLE:
+        return texts
+    for href in stylesheet_hrefs(html)[:limit]:
+        abs_url = urljoin(base_url, href)
+        if not abs_url.startswith(("http://", "https://")):
+            continue
+        try:
+            validate_url(abs_url)
+        except ValueError:
+            continue
+        try:
+            resp = curl_requests.get(abs_url, impersonate="chrome131", timeout=15, allow_redirects=True)
+            resp.raise_for_status()
+            if resp.text:
+                texts.append(resp.text)
+        except Exception:
+            continue
+    return texts
+
+
+def extract_design_payload(url: str, profiles=None) -> dict:
+    """Measure the live page when Chromium is available; fall back to static CSS.
+
+    A host without a browser must still answer, so the fallback is explicit in
+    the response (``engine: "static"`` plus a ``static-fallback`` gap).
+    """
+    from intelliscrape.design.payload import (
+        HOSTED_OPTIONS,
+        clean_profiles,
+        live_payload,
+        static_payload,
+    )
+
+    live_gaps: list = []
+    try:
+        from intelliscrape.design.service import extract_design
+
+        result = extract_design(url, profiles=clean_profiles(profiles), **HOSTED_OPTIONS)
+        if result.status != "failed":
+            return live_payload(result)
+        live_gaps = [g.model_dump() for g in result.gaps]
+        logger.warning(f"Live design extraction failed: {[g.get('code') for g in live_gaps]}")
+    except Exception as e:
+        logger.warning(f"Live design extraction unavailable: {type(e).__name__}: {e}")
+
+    html, _headers = fetch_raw(url)
+    if not html:
+        raise Exception("Empty response from target website")
+    from intelliscrape.design.static import DesignExtractor
+
+    report = DesignExtractor.extract(html=html, css_texts=_fetch_design_css(html, url), url=url)
+    return static_payload(url, report, live_gaps)
+
+
+@app.post("/design")
+def design_url(req: DesignRequest):
+    """Measure a page and return DESIGN.md, design.json, tokens.css and preview.html."""
+    url_str = str(req.url)
+    try:
+        validate_url(url_str)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    logger.info(f"Design request: {url_str}")
+    try:
+        payload = extract_design_payload(url_str, req.profiles)
+        logger.info(
+            f"Design success: {url_str} engine={payload.get('engine')} "
+            f"status={payload.get('status')} stats={payload.get('stats')}"
+        )
+        return payload
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Design failed: {url_str} -> {type(e).__name__}: {e}")
+        raise HTTPException(
+            status_code=400,
+            detail="Design extraction failed. The target may be unreachable or blocked.",
+        )
 
 
 if __name__ == "__main__":
