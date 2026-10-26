@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fixture Site</title>
+<style>
+  :root {
+    --brand: #2864DC;
+    --surface: #FFFFFF;
+    --radius-control: 8px;
+  }
+  body { margin:0; font-family: "Inter", system-ui, sans-serif; color:#1f2933; background:#ffffff; }
+  .container { max-width: 960px; margin: 0 auto; padding: 32px 24px; }
+  h1 { font-size: 32px; font-weight: 700; line-height: 1.2; color:#101418; letter-spacing: -0.02em; }
+  p  { font-size: 16px; font-weight: 400; line-height: 1.6; color:#52606d; }
+  .btn { display:inline-block; font-family:"Inter",sans-serif; font-size:14px; font-weight:600;
+         color:#ffffff; background:#2864DC; padding:12px 20px; border:0;
+         border-radius:8px; box-shadow:0 2px 6px rgba(40,100,220,0.4); cursor:pointer; }
+  .btn.secondary { background:#ffffff; color:#2864DC; box-shadow:none; border:1px solid #d9e2ec; }
+  .card { background:#ffffff; border:1px solid #e4e7eb; border-radius:12px;
+          box-shadow:0 4px 16px rgba(16,20,24,0.08); padding:24px; margin-top:24px; }
+  .badge { display:inline-block; font-size:12px; font-weight:600; color:#2864DC;
+           background:#eef3fd; padding:4px 10px; border-radius:999px; }
+  .nav { display:flex; gap:16px; padding:16px 24px; border-bottom:1px solid #e4e7eb; }
+  .nav a { font-size:14px; font-weight:500; color:#3e4c59; text-decoration:none; }
+  @media (min-width: 768px) { .container { padding: 48px 32px; } }
+  @media (min-width: 1024px) { .container { padding: 64px 48px; } }
+</style>
+</head>
+<body>
+  <nav class="nav">
+    <a href="#">Home</a><a href="#">About</a><a href="#">Pricing</a>
+  </nav>
+  <div class="container">
+    <span class="badge">New</span>
+    <h1>Build faster with IntelliScrape</h1>
+    <p>A measured fixture with known colors, fonts, spacing, radii and shadows.</p>
+    <button class="btn">Get Started</button>
+    <button class="btn secondary">Learn more</button>
+    <div class="card">
+      <h2 style="font-size:20px;font-weight:600;color:#101418;margin:0 0 8px;">A card</h2>
+      <p style="margin:0;">Card body copy for grouping.</p>
+    </div>
+  </div>
+</body>
+</html>
