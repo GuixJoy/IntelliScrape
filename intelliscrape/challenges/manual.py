@@ -195,6 +195,11 @@ class ManualCaptchaSolver:
                 "before we continue",
                 "perimeterx",
                 "human security",
+                "making sure you're not a bot",
+                "making sure you are not a bot",
+                "this website is running anubis",
+                "anubis uses proof-of-work",
+                "oh noes! access denied",
             ]
             for marker in challenge_markers:
                 if marker in html:
@@ -330,5 +335,20 @@ class ManualCaptchaSolver:
             return "datadome"
         if sum(1 for m in dd_weak if m in lower) >= 3 and html_len < 50000:
             return "datadome"
+
+        # Anubis proof-of-work
+        anubis_strong = [
+            "this website is running anubis", "anubis is compromise",
+            "anubis uses proof-of-work", "anubis could not load its javascript",
+        ]
+        anubis_weak = [
+            "anubis", "proof-of-work", "making sure you're not a bot",
+            "making sure you are not a bot", "oh noes! access denied",
+            "difficulty:", ".within.website/x/cmd/anubis",
+        ]
+        if sum(1 for m in anubis_strong if m in lower) >= 1:
+            return "anubis"
+        if sum(1 for m in anubis_weak if m in lower) >= 3 and html_len < 50000:
+            return "anubis"
 
         return None

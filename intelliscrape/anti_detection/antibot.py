@@ -18,6 +18,7 @@ class AntiBotVendor(Enum):
     INCAPSULA = "incapsula"
     AWS_WAF = "aws_waf"
     F5_SHAPE = "f5_shape"
+    ANUBIS = "anubis"
     UNKNOWN = "unknown"
 
 
@@ -82,6 +83,17 @@ class AntiBotDetector:
             "cookies": ["aws-waf-token", "aws-waf-token"],
             "html": ["aws waf challenge", "aws-waf-captcha"],
             "js": ["/challenge.js", "aws-waf"],
+        },
+        AntiBotVendor.ANUBIS: {
+            "headers": ["anubis-auth", "anubis-cookie"],
+            "cookies": ["anubis-auth", "anubis-cookie-verification"],
+            "html": [
+                "this website is running anubis", "anubis is compromise",
+                "anubis uses proof-of-work", "anubis could not load its javascript",
+                "making sure you're not a bot", "making sure you are not a bot",
+                "oh noes! access denied", "proof-of-work", "difficulty:",
+            ],
+            "js": [".within.website/x/cmd/anubis", "anubis", "main.mjs"],
         },
     }
 

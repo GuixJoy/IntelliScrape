@@ -3,100 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import random
 from typing import Dict, Optional
 
 from ..anti_detection.behavior import HumanBehavior
 from ..anti_detection.fingerprint import FingerprintGenerator
+from ..anti_detection.stealth_js import STEALTH_JS_BASE, build_stealth_js as _build_stealth_js
 from ..proxy import ProxyConfig
 from .base import BaseEngine, ScrapeResult
 
-
-# JavaScript patches for stealth mode - base version (overridden per-fingerprint)
-STEALTH_JS_BASE = """
-// Override navigator.webdriver
-Object.defineProperty(navigator, 'webdriver', {
-    get: () => undefined
-});
-
-// Override navigator.plugins
-Object.defineProperty(navigator, 'plugins', {
-    get: () => [1, 2, 3, 4, 5]
-});
-
-// Override navigator.languages
-Object.defineProperty(navigator, 'languages', {
-    get: () => ['en-US', 'en']
-});
-
-// Override chrome runtime
-window.chrome = {
-    runtime: {},
-    loadTimes: function() {},
-    csi: function() {},
-    app: {}
-};
-
-// Override permissions
-const originalQuery = window.navigator.permissions.query;
-window.navigator.permissions.query = (parameters) => (
-    parameters.name === 'notifications' ?
-        Promise.resolve({ state: Notification.permission }) :
-        originalQuery(parameters)
-);
-
-// Override navigator.connection
-Object.defineProperty(navigator, 'connection', {
-    get: () => ({
-        rtt: 50,
-        downlink: 10,
-        effectiveType: '4g',
-        saveData: false
-    })
-});
-
-// Override Date to prevent timezone fingerprinting
-const OriginalDate = Date;
-const originalGetMinutes = OriginalDate.prototype.getMinutes;
-OriginalDate.prototype.getMinutes = function() {
-    const date = new OriginalDate(this);
-    return originalGetMinutes.call(date);
-};
-"""
-
-
-def _build_stealth_js(fp) -> str:
-    """Build fingerprint-specific stealth JS from a FingerprintGenerator profile."""
-    return STEALTH_JS_BASE + f"""
-// Override navigator.hardwareConcurrency
-Object.defineProperty(navigator, 'hardwareConcurrency', {{
-    get: () => {fp.hardware_concurrency}
-}});
-
-// Override navigator.deviceMemory
-Object.defineProperty(navigator, 'deviceMemory', {{
-    get: () => {fp.device_memory}
-}});
-
-// Override screen dimensions
-Object.defineProperty(screen, 'width', {{ get: () => {fp.screen_width} }});
-Object.defineProperty(screen, 'height', {{ get: () => {fp.screen_height} }});
-Object.defineProperty(screen, 'availWidth', {{ get: () => {fp.screen_width} }});
-Object.defineProperty(screen, 'availHeight', {{ get: () => {fp.screen_height} }});
-Object.defineProperty(screen, 'colorDepth', {{ get: () => {fp.color_depth} }});
-
-// Override WebGL vendor and renderer
-const getParameter = WebGLRenderingContext.prototype.getParameter;
-WebGLRenderingContext.prototype.getParameter = function(parameter) {{
-    if (parameter === 37445) {{
-        return '{fp.webgl_vendor}';
-    }}
-    if (parameter === 37446) {{
-        return '{fp.webgl_renderer}';
-    }}
-    return getParameter.apply(this, arguments);
-}};
-"""
+logger = logging.getLogger("intelliscrape.engines.playwright_stealth")
 
 
 class PlaywrightStealthEngine(BaseEngine):
@@ -235,6 +152,17 @@ class PlaywrightStealthEngine(BaseEngine):
 
                 # Extra stabilization delay
                 page.wait_for_timeout(2000)
+
+                # Anubis proof-of-work challenge auto-solves in a real
+                # browser; wait for it instead of grabbing the challenge.
+                from ..challenges.anubis import is_anubis_challenge, wait_for_anubis_resolution
+
+                title = page.title()
+                if is_anubis_challenge("", title):
+                    logger.info("Anubis challenge detected on %s, waiting for PoW to resolve", url)
+                    resolved_title = wait_for_anubis_resolution(page, timeout=min(timeout, 90.0))
+                    if resolved_title:
+                        logger.info("Anubis challenge resolved: %s", resolved_title)
 
                 # Simulate human behavior
                 if self.simulate_behavior:
