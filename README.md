@@ -12,7 +12,7 @@ A Python web scraping library with anti-detection, TLS fingerprint impersonation
 [![License](https://img.shields.io/pypi/l/intelliscrape?color=yellow)](https://github.com/GuixJoy/IntelliScrape/blob/main/LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/GuixJoy/IntelliScrape?logo=github)](https://github.com/GuixJoy/IntelliScrape)
 
-[Installation](#installation) | [Quick Start](#quick-start) | [CLI Reference](#cli-reference) | [Library API](#library-api-reference) | [Web Search](#web_search--web-search) | [Examples](#examples) | [Engine System](#engine-system) | [Features](#features)
+[Installation](#installation) | [Quick Start](#quick-start) | [CLI Reference](#cli-reference) | [Library API](#library-api-reference) | [Design Extract](#design-extract-playwright) | [Web Search](#web_search--web-search) | [Examples](#examples) | [Engine System](#engine-system) | [Features](#features)
 
 </div>
 
@@ -43,6 +43,7 @@ No more switching between `requests`, `playwright`, and `selenium`. No more debu
 - **Backlink discovery** (Google/Bing `link:` queries, anchor-text and rel analysis)
 - **Website intelligence** (detect frameworks, CMS, analytics, CDN, hosting, and more)
 - **API detection** (REST/GraphQL/WebSocket endpoints, third-party services, exposed keys)
+- **Design extraction** (live rendered page → `DESIGN.md`, `design.json`, `tokens.css`, `preview.html`; no LLM key)
 
 ---
 
@@ -62,6 +63,55 @@ pip install intelliscrape
 | `async` | `pip install intelliscrape[async]` | Async/concurrent scraping |
 | `all` | `pip install intelliscrape[all]` | Everything above |
 | `dev` | `pip install intelliscrape[dev]` | pytest, ruff |
+
+### Stealth Browser (Camoufox)
+
+The Camoufox engine needs its browser binary (~470 MB download). IntelliScrape
+installs a **trimmed** build by default that skips ~600 MB of bundled system
+fonts you only need when spoofing a *different* OS than your host:
+
+```bash
+intelliscrape --install-browser          # mini profile: ~330 MB installed (recommended)
+intelliscrape --install-browser full     # everything, identical to `camoufox fetch`
+intelliscrape --browser-status           # check whether the browser is installed
+```
+
+Font-list spoofing still works in the mini profile — only glyph rendering falls
+back to your system fonts. If you scrape with `--engine camoufox` and the
+browser is missing, the CLI offers to download it for you.
+
+> Note: the download itself comes from the official Camoufox release (~470 MB)
+> because fonts are packed inside it. A pre-trimmed mirror zip can be set via
+> `INTELLISCRAPE_BROWSER_URL`; see `scripts/repack_camoufox.py`.
+
+### Design Extract (Playwright)
+
+Design extraction measures a **live rendered page** (computed styles, geometry,
+screenshots), so it needs the Playwright Chromium binary. Playwright itself is
+a core dependency; the browser binary is a one-time download:
+
+```bash
+playwright install chromium        # required for --design / extract_design()
+```
+
+Without the binary, `extract_design()` raises a clear error with these exact
+instructions. Design extraction needs **no LLM or API key** — core measurement
+runs entirely locally. The static fallback (`--design-static`) needs no browser
+at all but cannot measure computed styles or geometry.
+
+It measures, on the rendered page:
+
+- **Color** — canonicalized palette with semantic roles (`primary`, `ink`,
+  `surface`, `muted`, `success`, overlays) and measured contrast context
+- **Typography** — families, px type scale, weights, line heights
+- **Space and shape** — spacing rhythm, radii, shadows, borders
+- **Components** — representative buttons, inputs, cards and navigation
+- **Breakpoints** — media-query widths normalized to px
+
+Every token keeps its evidence (`measured` vs `inferred`) and the result exposes
+`gaps` instead of guessing. `confidence` is `category coverage × value-resolution
+rate × capture depth`, with a score per section — it describes how complete the
+capture is, not how good the design is.
 
 ---
 
@@ -283,6 +333,30 @@ intelliscrape [URL] [OPTIONS]
 | `--md-keep-nav` | Keep `<nav>` / `<footer>` content |
 
 Reuses `--mirror-delay`, `--mirror-exclude`, `--mirror-include`, `--mirror-engine`, `--mirror-proxy`, `--mirror-zip`, `--mirror-warc`, `--no-robots`, `--max-pages`.
+
+### Design Extract
+
+| Flag | Description |
+|---|---|
+| `--design` | Extract a design reference from the live rendered page |
+| `--design-scope {page,site}` | Capture scope (default: `page`; `site` records a gap in this version) |
+| `--design-output DIR` | Output directory (default: `./design-output`) |
+| `--design-profiles LIST` | Comma-separated profiles: `desktop,mobile` (default) |
+| `--design-schemes LIST` | Comma-separated color schemes: `light` (default), `dark` |
+| `--design-max-pages N` | Max pages to sample for `site` scope (default: 1) |
+| `--design-static` | Fast no-browser fallback (CSS regex; no computed styles) |
+| `--design-verify` | Verify component recipes (not yet implemented; records a gap) |
+| `--design-overwrite` | Replace an existing, non-empty output directory |
+
+Writes `DESIGN.md`, `design.json`, `tokens.css` and a script-free `preview.html`
+(plus `screenshots/`). Needs `playwright install chromium`.
+
+```bash
+intelliscrape https://example.com --design
+intelliscrape https://example.com --design --design-profiles mobile --design-output ./acme
+```
+
+Exit status: `0` succeeded · `1` internal failure · `2` partial · `3` target blocked.
 
 ### Export
 
@@ -959,6 +1033,97 @@ md = html_to_markdown(html, url="https://example.com/page",
 
 ---
 
+### `extract_design()` — Design Extract (URL → design reference)
+
+Measure a live rendered page and produce a reusable design reference: tokens, representative components, coverage and explicit gaps. No LLM or API key required. Requires `playwright install chromium`.
+
+```python
+from intelliscrape import extract_design
+
+result = extract_design(
+    "https://example.com",
+    scope="page",                       # "page" (default) or "site"
+    profiles=["desktop", "mobile"],     # pinned capture profiles
+    color_schemes=["light"],            # + "dark" to probe both
+)
+
+print(result.status)                    # "succeeded" | "partial" | "blocked" | "failed"
+print(result.coverage.elements_visible) # 1320
+print(result.stats["colors"])           # 18
+
+for t in result.tokens_by_category("color")[:5]:
+    print(t.value, t.role or "-", "inferred" if t.role_status == "inferred" else "measured")
+
+for g in result.gaps:                   # always explicit, never silent
+    print(g.code, g.message)
+
+manifest = result.save("./design-output")
+# ./design-output/{DESIGN.md, design.json, tokens.css, preview.html, screenshots/}
+```
+
+Async form (runs the sync pipeline on a worker thread):
+
+```python
+from intelliscrape import aextract_design
+result = await aextract_design("https://example.com")
+```
+
+Output layout:
+
+```
+design-output/
+├── DESIGN.md          # YAML front matter + ordered spec sections
+├── design.json        # full versioned result: observations, evidence, gaps
+├── tokens.css         # :root custom properties (observed values only)
+├── preview.html       # script-free, self-contained style guide
+└── screenshots/       # per-profile viewport captures (when requested)
+```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `url` | str | required | Target URL (`http`/`https`, `file` for local fixtures) |
+| `scope` | str | `page` | `page` or `site` (only submitted page captured in this version) |
+| `profiles` | list | `["desktop","mobile"]` | Capture profiles: `desktop` (1440×900), `mobile` (390×844) |
+| `color_schemes` | list | `["light"]` | `light` / `dark` probes |
+| `max_pages` | int | 1 | Max pages for `site` scope |
+| `max_elements` | int | 400 | Element sampling cap |
+| `navigation_timeout` | float | 30.0 | Per-navigation timeout (seconds) |
+| `stabilize_ms` | int | 800 | Settle time before measuring (rest state) |
+| `scroll_steps` | int | 6 | Bounded lazy-load scroll steps |
+| `headless` | bool | True | Run the browser headless |
+| `include_screenshots` | bool | False | Capture per-profile viewport PNGs |
+| `static` | bool | False | (via `IntelliScrape.extract_design`) use no-browser CSS-regex fallback |
+
+Returns `DesignExtraction`:
+- `result.status` — `succeeded` / `partial` / `blocked` / `failed`
+- `result.tokens_by_category(cat)` — `color`, `typography`, `spacing`, `radius`, `shadow`, `breakpoint`, `custom-property`
+- `result.observations` — raw measured elements (evidence layer)
+- `result.components` — representative rest-state components
+- `result.gaps` / `result.coverage` — explicit limitations and counts
+- `result.design_md` / `.tokens_css` / `.preview_html` / `.to_json()` — rendered artifacts
+- `result.save(dir)` — writes all artifacts, returns the name→path manifest
+
+Roles (`primary`, `primary-tint`, `ink`, `ink-black`, `ink-soft`, `muted`, `hairline`, `surface`, `surface-muted`, `success`, overlays) are assigned from measured prominence and contrast. Each token keeps `role_status="measured"` or `"inferred"` plus a `role_reason` — inferred roles are heuristics, never claimed measurements. See `examples/design_extract.py`.
+
+#### Hosted API
+
+The same payload is available from the hosted FastAPI app:
+
+```bash
+curl -X POST https://intelliscrape.fastapicloud.dev/design \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://example.com","profiles":["desktop"]}'
+```
+
+Response keys: `url`, `engine` (`live` or `static`), `status`, `markdown`,
+`artifacts`, `stats`, `coverage`, `confidence`, `gaps`, `profiles`,
+`schema_version`, `extractor_version`. When Chromium is unavailable the endpoint
+returns `engine: "static"`, `status: "partial"` and a `static-fallback` gap
+instead of failing. Server limits: desktop profile by default, `max_elements=400`,
+`navigation_timeout=25`, `stabilize_ms=600`, `challenge_timeout=8`.
+
+---
+
 ### `Downloader` — File Downloads
 
 ```python
@@ -1511,7 +1676,7 @@ report = scraper.search_web("site:github.com python scraper", limit=20)
 | False positive: "CAPTCHA detected" on normal site | v3.1.1+ uses smart detection — update with `pip install -U intelliscrape` |
 | Playwright not installed | `pip install playwright && playwright install chromium` |
 | Markdown mode says markdownify missing | `pip install markdownify` |
-| Camoufox not installed | `pip install "camoufox[geoip]" && python -m camoufox fetch` |
+| Camoufox not installed | `intelliscrape --install-browser` (or `pip install "camoufox[geoip]" && python -m camoufox fetch`) |
 | nodriver not installed | `pip install nodriver` |
 | DrissionPage not installed | `pip install DrissionPage` |
 | Want to see what's happening | Add `-v` flag for real-time progress output |
