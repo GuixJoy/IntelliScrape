@@ -140,6 +140,10 @@ Examples:
   intelliscrape https://docs.python.org --markdown --md-depth 3
   intelliscrape https://docs.python.org --markdown --md-output ./corpus --md-images
   
+  # Extract design system (colors, fonts, spacing) to design.md
+  intelliscrape https://stripe.com --design
+  intelliscrape https://stripe.com --design -o acme-design.md
+
   # With residential proxy (for better quality)
   intelliscrape https://amazon.com --brightdata-key YOUR_KEY
   
@@ -226,6 +230,26 @@ Examples:
     parser.add_argument("--tech", action="store_true",
                        help="Detect website technology stack (frameworks, CMS, analytics, CDN, etc.)")
 
+    # Design extraction
+    parser.add_argument("--design", action="store_true",
+                       help="Extract the design system (colors, fonts, spacing) into a Markdown file")
+    parser.add_argument("--design-scope", choices=["page", "site"], default="page",
+                       help="Design extraction scope: page or site (default: page)")
+    parser.add_argument("--design-output", type=str, default=None,
+                       help="Output directory for design artifacts (default: ./design-output)")
+    parser.add_argument("--design-max-pages", type=int, default=1,
+                       help="Max pages to sample for site scope (default: 1)")
+    parser.add_argument("--design-verify", action="store_true",
+                       help="Verify component recipes (requires browser verification)")
+    parser.add_argument("--design-static", action="store_true",
+                       help="Use fast static extraction instead of browser rendering (skips computed styles)")
+    parser.add_argument("--design-profiles", type=str, default="desktop,mobile",
+                       help="Comma-separated capture profiles (default: desktop,mobile)")
+    parser.add_argument("--design-schemes", type=str, default="light",
+                       help="Comma-separated color schemes to probe (default: light)")
+    parser.add_argument("--design-overwrite", action="store_true",
+                       help="Overwrite existing design output directory")
+
     # API detection
     parser.add_argument("--detect-api", action="store_true",
                        help="Detect API endpoints, third-party services, and exposed keys")
@@ -309,9 +333,34 @@ Examples:
     parser.add_argument("-v", "--verbose", action="store_true",
                        help="Show real-time progress (which engine is running, CAPTCHA detection, etc.)")
 
+    # Browser management
+    parser.add_argument("--install-browser", nargs="?", const="mini", default=None,
+                        choices=["mini", "full"], metavar="PROFILE",
+                        help="Install the Camoufox stealth browser and exit "
+                             "(profiles: mini ~330 MB trimmed [default], full ~930 MB)")
+    parser.add_argument("--browser-status", action="store_true",
+                        help="Show whether the Camoufox browser is installed and exit")
+
     args = parser.parse_args(argv)
 
     # Handle commands that don't require URL
+    if args.browser_status:
+        from . import browser_setup
+
+        if browser_setup.camoufox_browser_installed():
+            print("Camoufox browser: INSTALLED")
+            print(f"  Location: {browser_setup.get_install_dir()}")
+            return 0
+        print("Camoufox browser: NOT INSTALLED")
+        print(f"  Install with: intelliscrape --install-browser [mini|full]")
+        return 1
+
+    if args.install_browser:
+        from . import browser_setup
+
+        ok = browser_setup.install_camoufox(profile=args.install_browser)
+        return 0 if ok else 1
+
     if args.find_proxies:
         return _find_proxies(args)
 
@@ -331,6 +380,8 @@ Examples:
             return _check_links_cmd(args)
         elif args.tech:
             return _tech_report(args)
+        elif args.design:
+            return _design_report(args)
         elif args.detect_api:
             return _detect_api_report(args)
         elif args.seo:
@@ -378,6 +429,7 @@ def _create_scraper(args) -> IntelliScrape:
         intelligent=not args.no_intelligent,
         use_free_proxies=not args.no_free_proxies,
         manual_captcha=args.manual_captcha,
+        auto_install_browser=True,  # CLI: offer to fetch the stealth browser when needed
     )
 
     # Apply headers to all engines
@@ -677,6 +729,123 @@ def _tech_report(args) -> int:
         console.print(f"[green]Saved tech report to {args.output}[/green]")
 
     return 0
+
+
+def _design_report(args) -> int:
+    """Extract a design reference and write DESIGN.md/design.json/tokens.css/preview.html.
+
+    Uses the live browser engine by default (computed styles + geometry). Pass
+    --design-static for the fast no-browser fallback.
+
+    Stable exit statuses:
+      0 = succeeded    1 = internal failure
+      2 = partial      3 = blocked target
+    """
+    import json as _json
+    from pathlib import Path
+
+    from .design.service import extract_design as _extract
+    from .design.models import DesignExtraction
+
+    out_dir = Path(args.design_output or "design-output")
+    if out_dir.exists() and any(out_dir.iterdir()) and not args.design_overwrite:
+        console.print(
+            f"[red]Output directory {out_dir} already exists and is not empty.[/red]\n"
+            f"Pass --design-overwrite to replace it, or choose another --design-output."
+        )
+        return 1
+
+    profiles = [p.strip() for p in (args.design_profiles or "desktop,mobile").split(",") if p.strip()]
+    schemes = [s.strip() for s in (args.design_schemes or "light").split(",") if s.strip()]
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task(f"Measuring {args.url}...", total=None)
+
+        if args.design_static:
+            scraper = _create_scraper(args)
+            report_static = scraper.extract_design(args.url, static=True, force_browser=args.force_browser)
+            # Adapt the static DesignReport into the shared manifest shape.
+            out_dir.mkdir(parents=True, exist_ok=True)
+            md_path = out_dir / "DESIGN.md"
+            md_path.write_text(report_static.to_markdown(), encoding="utf-8")
+            progress.update(task, completed=True)
+            console.print()
+            console.print(Panel(
+                f"[bold]URL:[/bold] {report_static.url}\n[bold]Markdown:[/bold] {md_path}\n"
+                f"[yellow]Static fallback: computed styles and geometry were not measured.[/yellow]",
+                title="Design Extract (static)", border_style="blue",
+            ))
+            return 0
+
+        result: DesignExtraction = _extract(
+            args.url,
+            scope=args.design_scope,
+            profiles=profiles,
+            max_pages=args.design_max_pages,
+            color_schemes=schemes,
+        )
+        progress.update(task, completed=True)
+
+    if args.json:
+        # Machine-readable JSON on stdout; progress already went to stderr.
+        sys.stdout.write(result.to_json() + "\n")
+
+    manifest = result.save(str(out_dir), screenshots=True)
+
+    console.print()
+    console.print(Panel(
+        f"[bold]URL:[/bold] {result.capture.requested_url}\n"
+        f"[bold]Status:[/bold] {result.status}\n"
+        f"[bold]Output:[/bold] {out_dir}",
+        title="Design Extract", border_style="blue",
+    ))
+
+    st = result.stats
+    summary = Table(show_header=False)
+    summary.add_row("Status", str(result.status))
+    summary.add_row("Colors", str(st["colors"]))
+    summary.add_row("Font families", str(st["fonts"]))
+    summary.add_row("Spacing values", str(st["spacing"]))
+    summary.add_row("Border radii", str(st["radii"]))
+    summary.add_row("Shadows", str(st["shadows"]))
+    summary.add_row("Breakpoints", str(st["breakpoints"]))
+    summary.add_row("CSS variables", str(st["css_variables"]))
+    summary.add_row("Components", str(result.coverage.components_found))
+    summary.add_row("Elements measured", str(result.coverage.elements_visible))
+    console.print(summary)
+
+    if result.tokens_by_category("color"):
+        colors = Table(title="Top colors", show_header=True)
+        colors.add_column("Color", style="cyan")
+        colors.add_column("Role", style="dim")
+        colors.add_column("Basis", style="green")
+        for t in result.tokens_by_category("color")[:15]:
+            colors.add_row(t.value, t.role or "—", "inferred" if t.role_status == "inferred" else "measured")
+        console.print(colors)
+
+    if result.gaps:
+        console.print()
+        console.print("[yellow]Gaps / limitations:[/yellow]")
+        for g in result.gaps:
+            console.print(f"  [dim]·[/dim] [yellow]{g.code}[/yellow]: {g.message}")
+
+    console.print()
+    for name, path in manifest.items():
+        console.print(f"[green]  {name}[/green] → {path}")
+
+    # Map extraction status to the documented exit codes.
+    if result.status == "succeeded":
+        return 0
+    if result.status == "partial":
+        return 2
+    if result.status == "blocked":
+        return 3
+    return 1
 
 
 def _mirror(args) -> int:
