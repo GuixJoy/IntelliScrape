@@ -8,8 +8,9 @@ Intelligent scraping with auto-detection and smart optimization.
 from __future__ import annotations
 
 import logging
+import sys
 from typing import Any, Callable, Dict, List, Optional, Sequence, Union
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 from .anti_detection.antibot import AntiBotDetector, AntiBotInfo
 from .anti_detection.behavior import HumanBehavior
@@ -27,6 +28,7 @@ from .engines.stealth import StealthEngine
 from .engines.camoufox import CamoufoxEngine
 from .engines.drissionpage import DrissionPageEngine
 from .exceptions import IntelliScrapeError
+from .design import DesignExtractor, DesignReport, stylesheet_hrefs
 from .extractor import extract_text
 from .extractor.structured import StructuredExtractor, StructuredData
 from .intelligent import SiteAnalyzer, SiteAnalysis, SmartRateLimiter
@@ -71,6 +73,40 @@ _AKAMAI_WEAK = ["access denied", "request denied", "akamai"]
 
 _DATADOME_STRONG = ["datadome-captcha", "dd.datadome.co", "captcha.datadome.net"]
 _DATADOME_WEAK = ["datadome"]
+
+_ANUBIS_STRONG = [
+    "this website is running anubis",
+    "anubis is compromise",
+    "anubis uses proof-of-work",
+    "anubis could not load its javascript",
+    "made with ❤️ in 🇨🇦",
+]
+_ANUBIS_WEAK = [
+    "anubis", "proof-of-work", "proof of work",
+    "making sure you're not a bot", "making sure you are not a bot",
+    "oh noes! access denied", "calculating", "difficulty:",
+    ".within.website/x/cmd/anubis",
+]
+
+
+def _is_anubis_blocked(html: str) -> bool:
+    """Check if HTML is an Anubis proof-of-work challenge page.
+
+    Anubis (within.website/CELPHASE) protects lore.kernel.org and other
+    sites with a JS proof-of-work challenge. Real browsers auto-solve it,
+    so this is treated as a browser-required challenge rather than a
+    hard block.
+    """
+    if not html:
+        return False
+    lower = html.lower()
+    strong = sum(1 for m in _ANUBIS_STRONG if m in lower)
+    if strong >= 1:
+        return True
+    weak = sum(1 for m in _ANUBIS_WEAK if m in lower)
+    if weak >= 3 and len(html) < 50000:
+        return True
+    return False
 
 
 def _is_cloudflare_blocked(html: str) -> bool:
@@ -148,6 +184,8 @@ def _is_any_antibot_blocked(html: str) -> Optional[str]:
         return "akamai"
     if _is_datadome_blocked(html):
         return "datadome"
+    if _is_anubis_blocked(html):
+        return "anubis"
     return None
 
 
@@ -215,6 +253,7 @@ class IntelliScrape:
         headless: bool = True,
         simulate_behavior: bool = True,
         manual_captcha: bool = False,
+        auto_install_browser: bool = False,
         tls_profile: str = "chrome131",
         session_profile: Optional[str] = None,
         max_retries: int = 3,
@@ -253,6 +292,10 @@ class IntelliScrape:
         simulate_behavior : bool
             Enable human-like behavioral simulation.
         manual_captcha : bool
+        If True, when a CAPTCHA is detected, open a visible browser and wait for manual solving.
+    auto_install_browser : bool
+        If True (CLI), interactively offer to download the Camoufox stealth browser
+        (~330 MB trimmed) the first time a scrape needs it and it is missing.
             When a CAPTCHA is detected, open a visible browser window
             and wait for the user to solve it manually, then continue.
         tls_profile : str
@@ -381,6 +424,9 @@ class IntelliScrape:
         self.headless = headless
         self.simulate_behavior = simulate_behavior
         self.manual_captcha = manual_captcha
+        # When True, offer to download the Camoufox browser interactively
+        # the first time a scrape would use it and it is missing (CLI).
+        self.auto_install_browser = auto_install_browser
 
     def analyze(self, url: str) -> SiteAnalysis:
         """Analyze a URL and return recommendations.
@@ -660,6 +706,15 @@ class IntelliScrape:
         for i, engine_name in enumerate(engine_order):
             tracker.engine_trying(engine_name, i + 1, total)
 
+            # Offer to install the Camoufox browser the first time it is
+            # needed (interactive sessions only).
+            if (
+                engine_name == "camoufox"
+                and self.auto_install_browser
+                and not getattr(self, "_browser_install_declined", False)
+            ):
+                self._maybe_offer_browser_install()
+
             # Pass proxy to engine if available
             fetch_kwargs = dict(kwargs)
             fetch_kwargs["timeout"] = attempt_timeout
@@ -743,6 +798,32 @@ class IntelliScrape:
 
         self.logger.info(f"CAPTCHA detected ({captcha_info.captcha_type.value}), waiting for manual solve")
         return self._wait_for_manual_captcha(url, captcha_info)
+
+    def _maybe_offer_browser_install(self) -> None:
+        """Interactively offer to install the Camoufox browser (once per run)."""
+        from . import browser_setup
+
+        if browser_setup.camoufox_browser_installed():
+            return
+        try:
+            if not sys.stdin.isatty() or not sys.stdout.isatty():
+                return
+        except Exception:
+            return
+
+        print()
+        print("The Camoufox stealth browser is not installed (~330 MB download).")
+        print("It is used automatically when sites block simpler engines.")
+        try:
+            answer = input("Download and install it now? [y/N] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            answer = ""
+        print()
+        if answer in ("y", "yes"):
+            browser_setup.install_camoufox(profile="mini")
+        else:
+            self._browser_install_declined = True
+            print(f"You can install it later with: {browser_setup.INSTALL_COMMAND}")
 
     def _fetch_with_engine(self, url: str, engine_name: str, **kwargs) -> ScrapeResult:
         """Fetch using a specific engine with retry."""
@@ -901,6 +982,118 @@ class IntelliScrape:
             headers=result.headers,
             url=url,
         )
+
+    def extract_design(
+        self,
+        url: str,
+        *,
+        scope: str = "page",
+        profiles: Optional[List[str]] = None,
+        max_pages: int = 1,
+        color_schemes: Optional[List[str]] = None,
+        max_elements: int = 400,
+        navigation_timeout: float = 30.0,
+        stabilize_ms: int = 800,
+        scroll_steps: int = 6,
+        challenge_timeout: float = 20.0,
+        headless: bool = True,
+        include_screenshots: bool = False,
+        static: bool = False,
+        engine: Optional[str] = None,
+        force_browser: bool = False,
+        max_stylesheets: int = 8,
+    ):
+        """Extract a website's design reference.
+
+        By default this renders the page in a live browser and measures resolved
+        computed styles and geometry (the measurement-grade path), returning a
+        :class:`~intelliscrape.design.models.DesignExtraction`. Use ``.save(dir)``
+        to write DESIGN.md / design.json / tokens.css / preview.html, or read
+        ``.design_md`` directly.
+
+        Parameters
+        ----------
+        url : str
+            Target URL.
+        scope : str
+            ``"page"`` (default) or ``"site"`` (multi-page sampling; only the
+            submitted page is captured in this version, and a gap is recorded).
+        profiles : list[str], optional
+            Capture profiles; any of ``"desktop"``/``"mobile"``. Defaults to both.
+        color_schemes : list[str], optional
+            ``"light"``/``"dark"`` probes. Defaults to ``["light"]``.
+        static : bool
+            If True, skip the browser and use the fast CSS-regex fallback over
+            static HTML, returning a :class:`DesignReport`. This cannot measure
+            computed styles or geometry — use only when no browser is available.
+        engine : str, optional
+            (static path only) Force a specific engine.
+        force_browser : bool
+            (static path only) Force browser engine for JS-heavy sites.
+        max_stylesheets : int
+            (static path only) How many linked stylesheets to fetch (default 8).
+
+        Returns
+        -------
+        DesignExtraction (default) or DesignReport (when ``static=True``).
+
+        CLI equivalent::
+
+            intelliscrape https://example.com --design
+        """
+        if static:
+            return self._extract_design_static(
+                url,
+                engine=engine,
+                force_browser=force_browser,
+                max_stylesheets=max_stylesheets,
+            )
+
+        from .design.service import extract_design as _extract_design
+
+        return _extract_design(
+            url,
+            scope=scope,
+            profiles=profiles,
+            max_pages=max_pages,
+            color_schemes=color_schemes,
+            max_elements=max_elements,
+            navigation_timeout=navigation_timeout,
+            stabilize_ms=stabilize_ms,
+            scroll_steps=scroll_steps,
+            challenge_timeout=challenge_timeout,
+            headless=headless,
+            include_screenshots=include_screenshots,
+        )
+
+    def _extract_design_static(
+        self,
+        url: str,
+        *,
+        engine: Optional[str] = None,
+        force_browser: bool = False,
+        max_stylesheets: int = 8,
+    ) -> "DesignReport":
+        """Fast no-browser fallback: CSS-regex extraction over static HTML."""
+        result = self._fetch(url, engine=engine, force_browser=force_browser)
+        if not result.success:
+            raise IntelliScrapeError(f"Failed to fetch {url}: {result.error}")
+
+        css_texts: List[str] = []
+        static = StaticEngine()
+        if static.is_available() and max_stylesheets > 0:
+            for href in stylesheet_hrefs(result.html)[:max_stylesheets]:
+                abs_url = urljoin(result.redirect_url or url, href)
+                if urlsplit(abs_url).scheme not in ("http", "https"):
+                    continue
+                try:
+                    res = static.fetch(abs_url, timeout=15)
+                    if res.success and res.html:
+                        css_texts.append(res.html)
+                except Exception:  # ponytail: skip unreachable CSS, best-effort report
+                    continue
+
+        return DesignExtractor.extract(html=result.html, css_texts=css_texts, url=url)
 
     def search_web(
         self,

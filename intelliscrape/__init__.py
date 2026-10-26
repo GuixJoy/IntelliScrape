@@ -123,6 +123,9 @@ from .web_search import (
 )
 from .tech.extractor import TechStack, TechInfo, TechStackExtractor
 from .api_detector.extractor import ApiReport, ApiEndpoint, ApiKeyExposure, ApiDetector
+from .design import DesignReport, DesignExtractor
+from .design.service import extract_design, aextract_design
+from .design.models import DesignExtraction
 from .seo.analyzer import (
     SEOAnalyzer, SEOReport, SEOCheck, SEOIssue,
     ContentAnalysis, LinkAnalysis, HeadingAnalysis,
@@ -178,6 +181,12 @@ __all__ = [
     # Structured data
     "StructuredExtractor",
     "StructuredData",
+    # Design extraction
+    "DesignReport",
+    "DesignExtractor",
+    "extract_design",
+    "aextract_design",
+    "DesignExtraction",
     # Authentication
     "Authenticator",
     "LoginCredentials",
