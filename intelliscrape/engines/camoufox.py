@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import ctypes
+import logging
 import os
 from typing import Dict, Optional
 
@@ -22,6 +23,8 @@ from ..anti_detection.behavior import HumanBehavior
 from ..anti_detection.fingerprint import FingerprintGenerator
 from ..proxy import ProxyConfig
 from .base import BaseEngine, ScrapeResult
+
+logger = logging.getLogger("intelliscrape.engines.camoufox")
 
 
 def _get_camoufox_executable() -> Optional[str]:
@@ -119,6 +122,12 @@ class CamoufoxEngine(BaseEngine):
 
         browser = None
         try:
+            from camoufox.exceptions import CamoufoxNotInstalled
+        except ImportError:
+            class CamoufoxNotInstalled(Exception):  # type: ignore[no-redef]
+                pass
+
+        try:
             # Build proxy config
             proxy_config = None
             if self.proxy:
@@ -176,6 +185,17 @@ class CamoufoxEngine(BaseEngine):
                 # Navigate to page
                 response = page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
 
+                # Anubis proof-of-work challenge auto-solves in a real
+                # browser; wait for it instead of grabbing the challenge.
+                from ..challenges.anubis import is_anubis_challenge, wait_for_anubis_resolution
+
+                title = page.title()
+                if is_anubis_challenge("", title):
+                    logger.info("Anubis challenge detected on %s, waiting for PoW to resolve", url)
+                    resolved_title = wait_for_anubis_resolution(page, timeout=min(timeout, 90.0))
+                    if resolved_title:
+                        logger.info("Anubis challenge resolved: %s", resolved_title)
+
                 # Human-like delay after page load
                 page.wait_for_timeout(2000)
 
@@ -202,6 +222,17 @@ class CamoufoxEngine(BaseEngine):
                     success=True,
                 )
 
+        except CamoufoxNotInstalled:
+            from ..browser_setup import missing_browser_hint
+
+            return ScrapeResult(
+                url=url,
+                html="",
+                status_code=0,
+                engine=self.name,
+                success=False,
+                error=missing_browser_hint(),
+            )
         except Exception as exc:
             return ScrapeResult(
                 url=url,
