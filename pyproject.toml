@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "intelliscrape"
-version = "3.1.2"
+version = "3.2.0"
 description = "Advanced web scraping library with anti-detection, TLS impersonation, and stealth browsing. Scrapes 98% of websites."
 readme = "README.md"
 license = "LGPL-2.1"
@@ -103,3 +103,6 @@ Homepage = "https://github.com/GuixJoy/IntelliScrape"
 Documentation = "https://github.com/GuixJoy/IntelliScrape#readme"
 Repository = "https://github.com/GuixJoy/IntelliScrape"
 Issues = "https://github.com/GuixJoy/IntelliScrape/issues"
+
+[tool.setuptools.package-data]
+"intelliscrape.design" = ["collect.js"]

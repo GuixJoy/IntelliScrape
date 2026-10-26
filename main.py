@@ -104,7 +104,7 @@ except ImportError:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-WEB_VERSION = "3.1.2"
+WEB_VERSION = "3.2.0"
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 if DATABASE_URL and "channel_binding=require" in DATABASE_URL:

@@ -133,7 +133,7 @@ from .seo.analyzer import (
 )
 from .seo.backlinks import BacklinkAnalyzer, BacklinkReport, Backlink
 
-__version__ = "3.1.2"
+__version__ = "3.2.0"
 
 __all__ = [
     # Main API
